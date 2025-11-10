@@ -79,6 +79,22 @@ namespace RemoteEditorSync
             Debug.Log("[RemoteEditorSyncSetup] Test object created. Try moving, renaming, or modifying it in Play Mode!");
         }
 
+        [MenuItem("Tools/Remote Editor Sync/Show Play Mode Changes")]
+        public static void ShowPlayModeChanges()
+        {
+            if (PlayModeChangeLog.Instance.Changes.Count == 0)
+            {
+                EditorUtility.DisplayDialog(
+                    "変更なし",
+                    "Play中の変更記録がありません。\n\nPlay Modeで変更を行った後にこのウィンドウを開いてください。",
+                    "OK"
+                );
+                return;
+            }
+
+            PlayModeChangesWindow.ShowWindow();
+        }
+
         [MenuItem("Tools/Remote Editor Sync/About")]
         public static void ShowAbout()
         {

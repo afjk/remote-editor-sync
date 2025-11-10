@@ -70,6 +70,9 @@ namespace RemoteEditorSync
             _isEnabled = true;
             _trackedObjects.Clear();
 
+            // Play mode開始時にChangeLogをクリア
+            PlayModeChangeLog.Instance.Clear();
+
             // Undo/Redo（Inspector変更含む）のコールバック
             // これはエディタでの手動操作のみをキャプチャします
             Undo.postprocessModifications += OnPropertyModification;
@@ -91,6 +94,16 @@ namespace RemoteEditorSync
             _trackedObjects.Clear();
 
             Debug.Log("[RemoteEditorSync] Disabled");
+
+            // Play mode終了後に変更一覧ウィンドウを表示
+            // Edit modeに完全に戻った後に開く
+            if (PlayModeChangeLog.Instance.Changes.Count > 0)
+            {
+                EditorApplication.delayCall += () =>
+                {
+                    PlayModeChangesWindow.ShowWindow();
+                };
+            }
         }
 
         private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
@@ -135,6 +148,7 @@ namespace RemoteEditorSync
                         {
                             Debug.Log($"[RemoteEditorSync] Deleting tracked object: {trackedEntry.Value.Path}");
                             SendRPC("DeleteGameObject", new[] { trackedEntry.Value.SceneName, trackedEntry.Value.Path });
+                            PlayModeChangeLog.Instance.RecordDeleteGameObject(trackedEntry.Value.SceneName, trackedEntry.Value.Path);
                             _trackedObjects.Remove(trackedEntry.Key);
                         }
                         break;
@@ -246,6 +260,12 @@ namespace RemoteEditorSync
             };
 
             SendRPC("CreateGameObject", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+
+            // Play中の変更を記録
+            PlayModeChangeLog.Instance.RecordCreateGameObject(
+                data.SceneName, data.Path, data.Name, data.ParentPath,
+                data.Position, data.Rotation, data.Scale, data.ActiveSelf,
+                data.PrimitiveType, data.SerializedData);
         }
 
         private static void SendObjectUpdate(GameObject go)
@@ -266,6 +286,7 @@ namespace RemoteEditorSync
             if (oldState.Name != go.name || oldState.Path != newPath)
             {
                 SendRPC("RenameGameObject", new[] { go.scene.name, oldState.Path, go.name });
+                PlayModeChangeLog.Instance.RecordRenameGameObject(go.scene.name, oldState.Path, go.name);
                 oldState.Name = go.name;
                 oldState.Path = newPath;
             }
@@ -273,6 +294,7 @@ namespace RemoteEditorSync
             if (oldState.ActiveSelf != go.activeSelf)
             {
                 SendRPC("SetActive", new[] { go.scene.name, newPath, go.activeSelf.ToString() });
+                PlayModeChangeLog.Instance.RecordSetActive(go.scene.name, newPath, go.activeSelf);
                 oldState.ActiveSelf = go.activeSelf;
             }
 
@@ -292,6 +314,8 @@ namespace RemoteEditorSync
                 };
 
                 SendRPC("UpdateTransform", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+                PlayModeChangeLog.Instance.RecordUpdateTransform(
+                    data.SceneName, data.Path, data.Position, data.Rotation, data.Scale);
 
                 oldState.Position = t.localPosition;
                 oldState.Rotation = t.localRotation.eulerAngles;
