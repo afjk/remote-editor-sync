@@ -79,6 +79,19 @@ namespace RemoteEditorSync
             Debug.Log("[RemoteEditorSyncSetup] Test object created. Try moving, renaming, or modifying it in Play Mode!");
         }
 
+        [MenuItem("Tools/Remote Editor Sync/Enable Auto Sync")]
+        public static void ToggleAutoSync()
+        {
+            RemoteEditorSync.AutoSyncEnabled = !RemoteEditorSync.AutoSyncEnabled;
+        }
+
+        [MenuItem("Tools/Remote Editor Sync/Enable Auto Sync", true)]
+        public static bool ToggleAutoSyncValidate()
+        {
+            Menu.SetChecked("Tools/Remote Editor Sync/Enable Auto Sync", RemoteEditorSync.AutoSyncEnabled);
+            return true;
+        }
+
         [MenuItem("Tools/Remote Editor Sync/Show Play Mode Changes")]
         public static void ShowPlayModeChanges()
         {
@@ -98,9 +111,12 @@ namespace RemoteEditorSync
         [MenuItem("Tools/Remote Editor Sync/About")]
         public static void ShowAbout()
         {
+            var autoSyncStatus = RemoteEditorSync.AutoSyncEnabled ? "有効" : "無効";
             EditorUtility.DisplayDialog(
                 "STYLY Remote Editor Sync v1.2.0",
                 "Remote Editor Sync - Unity Editorの変更をクライアントにリアルタイム反映\n\n" +
+                $"現在の状態: 自動同期 {autoSyncStatus}\n" +
+                "(Tools > Remote Editor Sync > Enable Auto Sync で切り替え)\n\n" +
                 "使用方法:\n" +
                 "1. Tools > Remote Editor Sync > Setup Scene でセットアップ\n" +
                 "2. Play Modeに入る\n" +
@@ -110,9 +126,11 @@ namespace RemoteEditorSync
                 "Features:\n" +
                 "• GameObject作成/削除/名前変更/アクティブ状態\n" +
                 "• Transform同期（Position, Rotation, Scale）\n" +
+                "• Play Mode変更の保存と適用\n" +
                 "• プリミティブタイプの自動検出\n" +
                 "• エディタ操作のみ検知（スクリプト生成は除外）\n" +
-                "• タグフィルタリング対応\n\n" +
+                "• タグフィルタリング対応\n" +
+                "• マルチシーン対応\n\n" +
                 "詳細: Packages/com.styly.remote-editor-sync/README.md",
                 "OK"
             );

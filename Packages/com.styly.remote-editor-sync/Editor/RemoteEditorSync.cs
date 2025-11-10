@@ -15,9 +15,24 @@ namespace RemoteEditorSync
         private static Dictionary<int, ObjectState> _trackedObjects = new Dictionary<int, ObjectState>();
         private static bool _isEnabled = false;
 
+        // 自動同期のOn/Off設定（EditorPrefsで永続化）
+        private const string AutoSyncEnabledKey = "RemoteEditorSync.AutoSyncEnabled";
+        private static bool _autoSyncEnabled = true;
+
         // 同期対象のフィルタリング設定
         private static bool _syncOnlyEditorChanges = true; // エディタ操作のみ同期
         private static string _syncTagFilter = ""; // 特定タグのみ同期（空なら全て）
+
+        public static bool AutoSyncEnabled
+        {
+            get => _autoSyncEnabled;
+            set
+            {
+                _autoSyncEnabled = value;
+                EditorPrefs.SetBool(AutoSyncEnabledKey, value);
+                Debug.Log($"[RemoteEditorSync] Auto Sync: {(value ? "Enabled" : "Disabled")}");
+            }
+        }
 
         // JsonSerializerSettings to avoid circular reference errors
         private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
@@ -28,6 +43,9 @@ namespace RemoteEditorSync
 
         static RemoteEditorSync()
         {
+            // EditorPrefsから設定を読み込み
+            _autoSyncEnabled = EditorPrefs.GetBool(AutoSyncEnabledKey, true);
+
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         }
 
@@ -55,6 +73,12 @@ namespace RemoteEditorSync
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
+            // 自動同期が無効の場合は何もしない
+            if (!_autoSyncEnabled)
+            {
+                return;
+            }
+
             if (state == PlayModeStateChange.EnteredPlayMode)
             {
                 Enable();
