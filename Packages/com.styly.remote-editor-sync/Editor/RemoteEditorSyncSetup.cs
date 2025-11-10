@@ -53,32 +53,6 @@ namespace RemoteEditorSync
             Debug.Log("[RemoteEditorSyncSetup] Setup completed! RemoteEditorSyncReceiver has been added to the scene.");
         }
 
-        [MenuItem("Tools/Remote Editor Sync/Create Test Object")]
-        public static void CreateTestObject()
-        {
-            var testObj = new GameObject("TestObject");
-            testObj.transform.position = Vector3.zero;
-
-            // いくつかの子オブジェクトを追加
-            var child1 = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            child1.name = "TestCube";
-            child1.transform.SetParent(testObj.transform);
-            child1.transform.localPosition = new Vector3(0, 1, 0);
-            child1.transform.localScale = Vector3.one * 0.5f;
-
-            var child2 = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            child2.name = "TestSphere";
-            child2.transform.SetParent(testObj.transform);
-            child2.transform.localPosition = new Vector3(2, 1, 0);
-            child2.transform.localScale = Vector3.one * 0.5f;
-
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-            Selection.activeGameObject = testObj;
-            EditorGUIUtility.PingObject(testObj);
-
-            Debug.Log("[RemoteEditorSyncSetup] Test object created. Try moving, renaming, or modifying it in Play Mode!");
-        }
-
         [MenuItem("Tools/Remote Editor Sync/Enable Auto Sync")]
         public static void ToggleAutoSync()
         {
@@ -113,7 +87,7 @@ namespace RemoteEditorSync
         {
             var autoSyncStatus = RemoteEditorSync.AutoSyncEnabled ? "有効" : "無効";
             EditorUtility.DisplayDialog(
-                "STYLY Remote Editor Sync v1.2.1",
+                "STYLY Remote Editor Sync v1.2.2",
                 "Remote Editor Sync - Unity Editorの変更をクライアントにリアルタイム反映\n\n" +
                 $"現在の状態: 自動同期 {autoSyncStatus}\n" +
                 "(Tools > Remote Editor Sync > Enable Auto Sync で切り替え)\n\n" +

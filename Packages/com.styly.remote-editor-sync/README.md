@@ -131,7 +131,6 @@ Consider disabling Auto Sync when:
 |-----------|-------------|
 | `Tools` > `Remote Editor Sync` > `Enable Auto Sync` | Toggle automatic synchronization On/Off (with checkmark) |
 | `Tools` > `Remote Editor Sync` > `Setup Scene` | Auto-setup RemoteEditorSyncReceiver |
-| `Tools` > `Remote Editor Sync` > `Create Test Object` | Create test objects for trying out sync |
 | `Tools` > `Remote Editor Sync` > `Show Play Mode Changes` | Show window to apply Play mode changes to Edit mode |
 | `Tools` > `Remote Editor Sync` > `Settings` > `Set Tag Filter` | Enable tag-based filtering |
 | `Tools` > `Remote Editor Sync` > `Settings` > `Clear Tag Filter` | Disable tag filtering |
