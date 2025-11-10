@@ -94,6 +94,16 @@ Never lose your Play mode tweaks again! This feature automatically saves all cha
 
 **Manual Access**: `Tools` > `Remote Editor Sync` > `Show Play Mode Changes`
 
+## ⚙️ Performance Settings
+
+If Editor performance is a concern, you can disable automatic synchronization:
+
+**Toggle Auto Sync**: `Tools` > `Remote Editor Sync` > `Enable Auto Sync`
+
+- ✅ Checkmark indicates current state
+- 💾 Setting persists across Unity sessions
+- 🚀 Reduces overhead when not needed
+
 ## 📖 Documentation
 
 For detailed documentation, see:

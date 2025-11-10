@@ -98,10 +98,38 @@ To sync only specific GameObjects:
 To clear the filter:
 - `Tools` > `Remote Editor Sync` > `Settings` > `Clear Tag Filter`
 
+## Performance: Auto Sync On/Off
+
+If you find the continuous monitoring affecting Editor performance, you can disable automatic synchronization.
+
+### Toggle Auto Sync
+
+- Go to `Tools` > `Remote Editor Sync` > `Enable Auto Sync`
+- Click to toggle On/Off (checkmark shows current state)
+- Setting is saved and persists across Unity sessions
+
+### When to Disable
+
+Consider disabling Auto Sync when:
+- **Not actively using remote sync**: Save Editor resources when you don't need the feature
+- **Heavy scene editing**: Reduce overhead during intensive editing sessions
+- **Performance testing**: Isolate performance issues
+- **Large projects**: Minimize monitoring impact in complex hierarchies
+
+### Benefits
+
+- 🚀 **Improved Performance**: No monitoring overhead when disabled
+- ⚙️ **Flexible Control**: Enable only when needed
+- 💾 **Persistent Setting**: Choice is saved in EditorPrefs
+- ✅ **Visual Feedback**: Checkmark shows current state
+
+**Note**: When disabled, Play Mode Changes Preservation is also disabled.
+
 ## Menu Commands
 
 | Menu Path | Description |
 |-----------|-------------|
+| `Tools` > `Remote Editor Sync` > `Enable Auto Sync` | Toggle automatic synchronization On/Off (with checkmark) |
 | `Tools` > `Remote Editor Sync` > `Setup Scene` | Auto-setup RemoteEditorSyncReceiver |
 | `Tools` > `Remote Editor Sync` > `Create Test Object` | Create test objects for trying out sync |
 | `Tools` > `Remote Editor Sync` > `Show Play Mode Changes` | Show window to apply Play mode changes to Edit mode |
