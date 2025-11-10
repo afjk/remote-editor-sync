@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 using Styly.NetSync;
 using Newtonsoft.Json;
@@ -10,6 +11,7 @@ namespace RemoteEditorSync
     /// </summary>
     public class RemoteEditorSyncReceiver : MonoBehaviour
     {
+        // キー: "sceneName:path" の形式でGameObjectをキャッシュ
         private readonly Dictionary<string, GameObject> _pathToGameObject = new Dictionary<string, GameObject>();
 
         // JsonSerializerSettings to avoid circular reference errors
@@ -91,11 +93,19 @@ namespace RemoteEditorSync
             var data = JsonConvert.DeserializeObject<CreateGameObjectData>(args[0], _jsonSettings);
             if (data == null) return;
 
+            // シーンを取得
+            var scene = SceneManager.GetSceneByName(data.SceneName);
+            if (!scene.IsValid())
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Scene not found: {data.SceneName}");
+                return;
+            }
+
             // 親オブジェクトを検索
             Transform parent = null;
             if (!string.IsNullOrEmpty(data.ParentPath))
             {
-                var parentGo = FindGameObjectByPath(data.ParentPath);
+                var parentGo = FindGameObjectByPath(data.SceneName, data.ParentPath);
                 if (parentGo != null)
                 {
                     parent = parentGo.transform;
@@ -122,6 +132,12 @@ namespace RemoteEditorSync
                 go = new GameObject(data.Name);
             }
 
+            // シーンに移動（親がnullの場合）
+            if (parent == null)
+            {
+                SceneManager.MoveGameObjectToScene(go, scene);
+            }
+
             // Transform設定
             go.transform.SetParent(parent, false);
             go.transform.localPosition = data.Position;
@@ -143,60 +159,67 @@ namespace RemoteEditorSync
                 }
             }
 
-            // キャッシュに追加
-            _pathToGameObject[data.Path] = go;
+            // キャッシュに追加（シーン名を含むキー）
+            string cacheKey = $"{data.SceneName}:{data.Path}";
+            _pathToGameObject[cacheKey] = go;
 
-            Debug.Log($"[RemoteEditorSyncReceiver] Created: {data.Path}");
+            Debug.Log($"[RemoteEditorSyncReceiver] Created: {data.SceneName}/{data.Path}");
         }
 
         private void HandleDeleteGameObject(string[] args)
         {
-            if (args.Length < 1) return;
+            if (args.Length < 2) return;
 
-            string path = args[0];
-            var go = FindGameObjectByPath(path);
+            string sceneName = args[0];
+            string path = args[1];
+            var go = FindGameObjectByPath(sceneName, path);
 
             if (go != null)
             {
-                _pathToGameObject.Remove(path);
+                string cacheKey = $"{sceneName}:{path}";
+                _pathToGameObject.Remove(cacheKey);
                 Destroy(go);
-                Debug.Log($"[RemoteEditorSyncReceiver] Deleted: {path}");
+                Debug.Log($"[RemoteEditorSyncReceiver] Deleted: {sceneName}/{path}");
             }
         }
 
         private void HandleRenameGameObject(string[] args)
         {
-            if (args.Length < 2) return;
+            if (args.Length < 3) return;
 
-            string oldPath = args[0];
-            string newName = args[1];
+            string sceneName = args[0];
+            string oldPath = args[1];
+            string newName = args[2];
 
-            var go = FindGameObjectByPath(oldPath);
+            var go = FindGameObjectByPath(sceneName, oldPath);
             if (go != null)
             {
-                _pathToGameObject.Remove(oldPath);
+                string oldCacheKey = $"{sceneName}:{oldPath}";
+                _pathToGameObject.Remove(oldCacheKey);
                 go.name = newName;
 
                 // 新しいパスで再登録
                 string newPath = GetGameObjectPath(go);
-                _pathToGameObject[newPath] = go;
+                string newCacheKey = $"{sceneName}:{newPath}";
+                _pathToGameObject[newCacheKey] = go;
 
-                Debug.Log($"[RemoteEditorSyncReceiver] Renamed: {oldPath} -> {newPath}");
+                Debug.Log($"[RemoteEditorSyncReceiver] Renamed: {sceneName}/{oldPath} -> {sceneName}/{newPath}");
             }
         }
 
         private void HandleSetActive(string[] args)
         {
-            if (args.Length < 2) return;
+            if (args.Length < 3) return;
 
-            string path = args[0];
-            bool active = bool.Parse(args[1]);
+            string sceneName = args[0];
+            string path = args[1];
+            bool active = bool.Parse(args[2]);
 
-            var go = FindGameObjectByPath(path);
+            var go = FindGameObjectByPath(sceneName, path);
             if (go != null)
             {
                 go.SetActive(active);
-                Debug.Log($"[RemoteEditorSyncReceiver] SetActive: {path} = {active}");
+                Debug.Log($"[RemoteEditorSyncReceiver] SetActive: {sceneName}/{path} = {active}");
             }
         }
 
@@ -207,7 +230,7 @@ namespace RemoteEditorSync
             var data = JsonConvert.DeserializeObject<TransformData>(args[0], _jsonSettings);
             if (data == null) return;
 
-            var go = FindGameObjectByPath(data.Path);
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
             if (go != null)
             {
                 go.transform.localPosition = data.Position;
@@ -216,12 +239,22 @@ namespace RemoteEditorSync
             }
         }
 
-        private GameObject FindGameObjectByPath(string path)
+        private GameObject FindGameObjectByPath(string sceneName, string path)
         {
+            string cacheKey = $"{sceneName}:{path}";
+
             // まずキャッシュを確認
-            if (_pathToGameObject.TryGetValue(path, out var cached) && cached != null)
+            if (_pathToGameObject.TryGetValue(cacheKey, out var cached) && cached != null)
             {
                 return cached;
+            }
+
+            // シーンを取得
+            var scene = SceneManager.GetSceneByName(sceneName);
+            if (!scene.IsValid())
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Scene not found: {sceneName}");
+                return null;
             }
 
             // キャッシュになければ検索
@@ -232,8 +265,8 @@ namespace RemoteEditorSync
             {
                 if (current == null)
                 {
-                    // ルートレベルのオブジェクトを検索
-                    var rootObjects = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
+                    // ルートレベルのオブジェクトを検索（指定されたシーン内）
+                    var rootObjects = scene.GetRootGameObjects();
                     current = System.Array.Find(rootObjects, go => go.name == part)?.transform;
                 }
                 else
@@ -248,7 +281,7 @@ namespace RemoteEditorSync
             var result = current?.gameObject;
             if (result != null)
             {
-                _pathToGameObject[path] = result;
+                _pathToGameObject[cacheKey] = result;
             }
 
             return result;
@@ -258,15 +291,34 @@ namespace RemoteEditorSync
         {
             _pathToGameObject.Clear();
 
-            // シーン内のすべてのGameObjectをキャッシュ
-            var allObjects = FindObjectsOfType<GameObject>(true);
-            foreach (var go in allObjects)
+            // すべてのロード済みシーンをイテレート
+            for (int i = 0; i < SceneManager.sceneCount; i++)
             {
-                string path = GetGameObjectPath(go);
-                _pathToGameObject[path] = go;
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded) continue;
+
+                // シーン内のすべてのGameObjectをキャッシュ
+                var rootObjects = scene.GetRootGameObjects();
+                foreach (var rootGo in rootObjects)
+                {
+                    CacheGameObjectRecursive(scene.name, rootGo);
+                }
             }
 
-            Debug.Log($"[RemoteEditorSyncReceiver] Cached {_pathToGameObject.Count} GameObjects");
+            Debug.Log($"[RemoteEditorSyncReceiver] Cached {_pathToGameObject.Count} GameObjects from {SceneManager.sceneCount} scenes");
+        }
+
+        private void CacheGameObjectRecursive(string sceneName, GameObject go)
+        {
+            string path = GetGameObjectPath(go);
+            string cacheKey = $"{sceneName}:{path}";
+            _pathToGameObject[cacheKey] = go;
+
+            // 子オブジェクトも再帰的にキャッシュ
+            foreach (Transform child in go.transform)
+            {
+                CacheGameObjectRecursive(sceneName, child.gameObject);
+            }
         }
 
         private string GetGameObjectPath(GameObject go)
@@ -288,6 +340,7 @@ namespace RemoteEditorSync
         [System.Serializable]
         private class CreateGameObjectData
         {
+            public string SceneName;
             public string Path;
             public string Name;
             public string ParentPath;
@@ -302,6 +355,7 @@ namespace RemoteEditorSync
         [System.Serializable]
         private class TransformData
         {
+            public string SceneName;
             public string Path;
             public Vector3 Position;
             public Vector3 Rotation;

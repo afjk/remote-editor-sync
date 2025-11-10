@@ -134,7 +134,7 @@ namespace RemoteEditorSync
                         if (trackedEntry.Value != null)
                         {
                             Debug.Log($"[RemoteEditorSync] Deleting tracked object: {trackedEntry.Value.Path}");
-                            SendRPC("DeleteGameObject", new[] { trackedEntry.Value.Path });
+                            SendRPC("DeleteGameObject", new[] { trackedEntry.Value.SceneName, trackedEntry.Value.Path });
                             _trackedObjects.Remove(trackedEntry.Key);
                         }
                         break;
@@ -202,6 +202,7 @@ namespace RemoteEditorSync
             var state = new ObjectState
             {
                 InstanceId = go.GetInstanceID(),
+                SceneName = go.scene.name,
                 Path = GetGameObjectPath(go),
                 Name = go.name,
                 ActiveSelf = go.activeSelf,
@@ -232,6 +233,7 @@ namespace RemoteEditorSync
 
             var data = new CreateGameObjectData
             {
+                SceneName = go.scene.name,
                 Path = GetGameObjectPath(go),
                 Name = go.name,
                 ParentPath = parentPath,
@@ -263,14 +265,14 @@ namespace RemoteEditorSync
             // 変更をチェックして送信
             if (oldState.Name != go.name || oldState.Path != newPath)
             {
-                SendRPC("RenameGameObject", new[] { oldState.Path, go.name });
+                SendRPC("RenameGameObject", new[] { go.scene.name, oldState.Path, go.name });
                 oldState.Name = go.name;
                 oldState.Path = newPath;
             }
 
             if (oldState.ActiveSelf != go.activeSelf)
             {
-                SendRPC("SetActive", new[] { newPath, go.activeSelf.ToString() });
+                SendRPC("SetActive", new[] { go.scene.name, newPath, go.activeSelf.ToString() });
                 oldState.ActiveSelf = go.activeSelf;
             }
 
@@ -282,6 +284,7 @@ namespace RemoteEditorSync
             {
                 var data = new TransformData
                 {
+                    SceneName = go.scene.name,
                     Path = newPath,
                     Position = t.localPosition,
                     Rotation = t.localRotation.eulerAngles,
@@ -353,6 +356,7 @@ namespace RemoteEditorSync
         private class ObjectState
         {
             public int InstanceId;
+            public string SceneName;
             public string Path;
             public string Name;
             public bool ActiveSelf;
@@ -364,6 +368,7 @@ namespace RemoteEditorSync
         [System.Serializable]
         private class CreateGameObjectData
         {
+            public string SceneName;
             public string Path;
             public string Name;
             public string ParentPath;
@@ -378,6 +383,7 @@ namespace RemoteEditorSync
         [System.Serializable]
         private class TransformData
         {
+            public string SceneName;
             public string Path;
             public Vector3 Position;
             public Vector3 Rotation;
