@@ -1,0 +1,21 @@
+{
+    "name": "RemoteEditorSync.Editor",
+    "rootNamespace": "RemoteEditorSync",
+    "references": [
+        "GUID:71f73dfa490a5b84b9b17b2b59b31cec",
+        "RemoteEditorSync.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

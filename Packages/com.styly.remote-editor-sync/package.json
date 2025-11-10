@@ -1,0 +1,27 @@
+{
+  "name": "com.styly.remote-editor-sync",
+  "version": "0.0.1",
+  "displayName": "STYLY Remote Editor Sync",
+  "description": "Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via STYLY NetSync RPC. Perfect for XR development and remote debugging.",
+  "unity": "6000.0",
+  "keywords": [
+    "styly",
+    "netsync",
+    "remote",
+    "editor",
+    "sync",
+    "multiplayer",
+    "xr",
+    "debug",
+    "hierarchy",
+    "inspector"
+  ],
+  "author": {
+    "name": "STYLY Remote Editor Sync Contributors"
+  },
+  "dependencies": {
+    "com.styly.styly-netsync": "0.6.1",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "samples": []
+}
