@@ -16,6 +16,8 @@ Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
 - 🏷️ **Tag Filtering**: Optionally sync only specific GameObjects by tag
 - 📡 **RPC-based**: Built on STYLY NetSync for reliable network communication
+- 💾 **Play Mode Changes Preservation**: Save Play mode changes and selectively apply them to Edit mode after stopping
+- 🌍 **Multi-Scene Support**: Properly handles GameObjects across multiple loaded scenes
 
 ## 🎥 Demo Video
 
@@ -72,6 +74,25 @@ Tools > Remote Editor Sync > Setup Scene
    - Rename or delete objects
 
 → **Changes appear on client in real-time!** ✨
+
+## 💾 Play Mode Changes Preservation (NEW!)
+
+Never lose your Play mode tweaks again! This feature automatically saves all changes you make during Play mode and lets you selectively apply them to Edit mode.
+
+### How to Use
+
+1. **Enter Play Mode** and make any changes (create, move, rotate, rename objects, etc.)
+2. **Exit Play Mode** - a window automatically appears with all your changes
+3. **Select which changes to keep** using checkboxes
+4. **Click "Apply"** to save selected changes to your Edit mode scene
+
+### Features
+- ✅ Individual selection with checkboxes
+- 📋 Clear icons for each change type (➕Create, ➖Delete, ✏️Rename, 👁Active, 📐Transform)
+- ↩️ Full Undo/Redo support
+- 🌍 Multi-scene aware
+
+**Manual Access**: `Tools` > `Remote Editor Sync` > `Show Play Mode Changes`
 
 ## 📖 Documentation
 

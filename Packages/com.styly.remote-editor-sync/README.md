@@ -11,6 +11,8 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
 - 🏷️ **Tag Filtering**: Optionally sync only specific GameObjects by tag
 - 📡 **RPC-based**: Built on STYLY NetSync for reliable network communication
+- 💾 **Play Mode Changes Preservation**: Save Play mode changes and selectively apply them to Edit mode after stopping
+- 🌍 **Multi-Scene Support**: Properly handles GameObjects across multiple loaded scenes
 
 ## Supported Operations
 
@@ -102,10 +104,58 @@ To clear the filter:
 |-----------|-------------|
 | `Tools` > `Remote Editor Sync` > `Setup Scene` | Auto-setup RemoteEditorSyncReceiver |
 | `Tools` > `Remote Editor Sync` > `Create Test Object` | Create test objects for trying out sync |
+| `Tools` > `Remote Editor Sync` > `Show Play Mode Changes` | Show window to apply Play mode changes to Edit mode |
 | `Tools` > `Remote Editor Sync` > `Settings` > `Set Tag Filter` | Enable tag-based filtering |
 | `Tools` > `Remote Editor Sync` > `Settings` > `Clear Tag Filter` | Disable tag filtering |
 | `Tools` > `Remote Editor Sync` > `About` | Show information dialog |
 | `Tools` > `Remote Editor Sync` > `Open README` | Open this README |
+
+## Play Mode Changes Preservation
+
+One of the most frustrating aspects of Unity development is losing all changes made during Play mode when you stop. This package solves that problem!
+
+### How It Works
+
+1. **Automatic Recording**: All changes you make during Play mode are automatically recorded
+2. **Stop & Review**: When you exit Play mode, a window automatically appears showing all changes
+3. **Selective Application**: Choose which changes to apply to your Edit mode scene with checkboxes
+4. **Safe & Undoable**: Changes are applied with full Undo support
+
+### Usage
+
+1. Enter Play Mode
+2. Make any changes you want:
+   - Create GameObjects (primitives, empty objects)
+   - Move, rotate, scale objects
+   - Rename objects
+   - Toggle active/inactive
+   - Delete objects
+3. Exit Play Mode
+4. The "Play Mode Changes" window appears automatically
+5. Review the list of changes (with icons: ➕Create, ➖Delete, ✏️Rename, 👁Active, 📐Transform)
+6. Check/uncheck changes you want to apply
+7. Click "選択した変更を適用" (Apply Selected Changes)
+8. Changes are applied to your Edit mode scene!
+
+### Features
+
+- ✅ **Individual Selection**: Check only the changes you want to keep
+- 🔘 **Bulk Actions**: "Select All" and "Deselect All" buttons
+- 📋 **Clear Icons**: Visual indicators for each change type
+- ↩️ **Undo Support**: All applied changes can be undone (Ctrl+Z)
+- 🌍 **Multi-Scene**: Works correctly with multiple loaded scenes
+- 📝 **Change History**: Transform changes are consolidated (only latest value kept)
+
+### Manual Access
+
+If you dismiss the window, you can reopen it:
+- `Tools` > `Remote Editor Sync` > `Show Play Mode Changes`
+
+### Tips
+
+- **Transform Optimization**: Multiple transform changes on the same object are automatically merged into one
+- **Safe Workflow**: The confirmation dialog prevents accidental application
+- **Scene Changes**: All changes are properly scoped to their original scenes
 
 ## Limitations
 
@@ -185,7 +235,9 @@ Packages/com.styly.remote-editor-sync/
 ├── LICENSE
 ├── Editor/
 │   ├── RemoteEditorSync.cs              # Change detection & RPC sending
-│   ├── RemoteEditorSyncSetup.cs         # Setup utilities
+│   ├── RemoteEditorSyncSetup.cs         # Setup utilities & menu commands
+│   ├── PlayModeChangeLog.cs             # Play mode change recording system
+│   ├── PlayModeChangesWindow.cs         # EditorWindow for applying changes
 │   └── RemoteEditorSync.Editor.asmdef   # Assembly definition
 └── Runtime/
     ├── RemoteEditorSyncReceiver.cs      # RPC receiving & applying
@@ -193,6 +245,18 @@ Packages/com.styly.remote-editor-sync/
 ```
 
 ## Version History
+
+### v1.2.0 (2025-11-11)
+- ✨ **NEW**: Play Mode Changes Preservation feature
+  - Automatically records all changes made during Play mode
+  - Shows EditorWindow with selectable change list after stopping
+  - Apply changes selectively to Edit mode with checkboxes
+  - Full Undo/Redo support
+- ✨ Added multi-scene support
+  - All operations now properly handle multiple loaded scenes
+  - Scene-specific GameObject lookups
+- 🔧 Added menu command: "Show Play Mode Changes"
+- 📝 Enhanced documentation with detailed usage examples
 
 ### v1.1.0 (2025-11-10)
 - ✨ Added primitive type detection and synchronization

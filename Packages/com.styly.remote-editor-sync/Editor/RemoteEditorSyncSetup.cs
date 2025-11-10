@@ -99,7 +99,7 @@ namespace RemoteEditorSync
         public static void ShowAbout()
         {
             EditorUtility.DisplayDialog(
-                "STYLY Remote Editor Sync v1.1.0",
+                "STYLY Remote Editor Sync v1.2.0",
                 "Remote Editor Sync - Unity Editorの変更をクライアントにリアルタイム反映\n\n" +
                 "使用方法:\n" +
                 "1. Tools > Remote Editor Sync > Setup Scene でセットアップ\n" +
