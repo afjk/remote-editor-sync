@@ -187,6 +187,18 @@ namespace RemoteEditorSync
                             SendObjectUpdate(parentChangedGo);
                         }
                         break;
+
+                    case ObjectChangeKind.ChangeGameObjectStructure:
+                        stream.GetChangeGameObjectStructureEvent(i, out var structureEvent);
+                        var structureChangedGo = EditorUtility.InstanceIDToObject(structureEvent.instanceId) as GameObject;
+                        Debug.Log($"[RemoteEditorSync] ChangeGameObjectStructure detected: {structureChangedGo?.name ?? "null"}");
+
+                        if (structureChangedGo != null && ShouldSync(structureChangedGo))
+                        {
+                            // Component追加/削除の可能性があるので、全Componentをチェック
+                            SendComponentUpdate(structureChangedGo);
+                        }
+                        break;
                 }
             }
         }
@@ -229,6 +241,7 @@ namespace RemoteEditorSync
                 if (go != null && ShouldSync(go))
                 {
                     SendObjectUpdate(go);
+                    SendComponentUpdate(go); // Component変更も同期
                 }
             }
 
@@ -376,6 +389,181 @@ namespace RemoteEditorSync
             return path;
         }
 
+        private static void SendComponentUpdate(GameObject go)
+        {
+            if (!ShouldSync(go)) return;
+
+            int id = go.GetInstanceID();
+            if (!_trackedObjects.ContainsKey(id))
+            {
+                CreateObjectState(go);
+                // 新規オブジェクトの場合、全Componentを送信
+                SendAllComponents(go);
+                return;
+            }
+
+            var oldState = _trackedObjects[id];
+            var newPath = GetGameObjectPath(go);
+
+            // 現在のComponent一覧を取得（Transform以外）
+            var currentComponents = go.GetComponents<Component>()
+                .Where(c => c != null && !(c is Transform))
+                .ToDictionary(c => c.GetType().AssemblyQualifiedName, c => c);
+
+            var oldComponentTypes = new HashSet<string>(oldState.ComponentDataCache.Keys);
+            var newComponentTypes = new HashSet<string>(currentComponents.Keys);
+
+            // 追加されたComponent
+            foreach (var typeName in newComponentTypes.Except(oldComponentTypes))
+            {
+                if (currentComponents.TryGetValue(typeName, out var component))
+                {
+                    SendAddComponent(go, component);
+                }
+            }
+
+            // 削除されたComponent
+            foreach (var typeName in oldComponentTypes.Except(newComponentTypes))
+            {
+                SendRemoveComponent(go.scene.name, newPath, typeName);
+            }
+
+            // 既存Componentのプロパティ変更チェック
+            foreach (var typeName in newComponentTypes.Intersect(oldComponentTypes))
+            {
+                if (currentComponents.TryGetValue(typeName, out var component))
+                {
+                    var newData = SerializeComponent(component);
+                    if (newData != null && oldState.ComponentDataCache.TryGetValue(typeName, out var oldData))
+                    {
+                        if (newData != oldData)
+                        {
+                            SendUpdateComponent(go, component);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void SendAllComponents(GameObject go)
+        {
+            var components = go.GetComponents<Component>()
+                .Where(c => c != null && !(c is Transform));
+
+            foreach (var component in components)
+            {
+                SendAddComponent(go, component);
+            }
+        }
+
+        private static void SendAddComponent(GameObject go, Component component)
+        {
+            if (component == null) return;
+
+            var typeName = component.GetType().AssemblyQualifiedName;
+            var serializedData = SerializeComponent(component);
+
+            if (serializedData == null) return;
+
+            var data = new AddComponentData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                ComponentType = typeName,
+                SerializedData = serializedData,
+                Enabled = GetComponentEnabled(component)
+            };
+
+            SendRPC("AddComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+
+            // キャッシュを更新
+            int id = go.GetInstanceID();
+            if (_trackedObjects.TryGetValue(id, out var state))
+            {
+                state.ComponentDataCache[typeName] = serializedData;
+            }
+
+            Debug.Log($"[RemoteEditorSync] AddComponent: {go.name} - {component.GetType().Name}");
+        }
+
+        private static void SendRemoveComponent(string sceneName, string path, string componentType)
+        {
+            var data = new RemoveComponentData
+            {
+                SceneName = sceneName,
+                Path = path,
+                ComponentType = componentType
+            };
+
+            SendRPC("RemoveComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+
+            Debug.Log($"[RemoteEditorSync] RemoveComponent: {path} - {componentType}");
+        }
+
+        private static void SendUpdateComponent(GameObject go, Component component)
+        {
+            if (component == null) return;
+
+            var typeName = component.GetType().AssemblyQualifiedName;
+            var serializedData = SerializeComponent(component);
+
+            if (serializedData == null) return;
+
+            var data = new ComponentData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                ComponentType = typeName,
+                SerializedData = serializedData,
+                Enabled = GetComponentEnabled(component)
+            };
+
+            SendRPC("UpdateComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+
+            // キャッシュを更新
+            int id = go.GetInstanceID();
+            if (_trackedObjects.TryGetValue(id, out var state))
+            {
+                state.ComponentDataCache[typeName] = serializedData;
+            }
+
+            Debug.Log($"[RemoteEditorSync] UpdateComponent: {go.name} - {component.GetType().Name}");
+        }
+
+        private static string SerializeComponent(Component component)
+        {
+            if (component == null) return null;
+
+            try
+            {
+                return JsonUtility.ToJson(component);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize component '{component.GetType().Name}': {e.Message}");
+                return null;
+            }
+        }
+
+        private static bool GetComponentEnabled(Component component)
+        {
+            // Behaviourを継承しているComponentのみEnabled状態がある
+            if (component is Behaviour behaviour)
+            {
+                return behaviour.enabled;
+            }
+            // RendererやColliderなども確認
+            if (component is Renderer renderer)
+            {
+                return renderer.enabled;
+            }
+            if (component is Collider collider)
+            {
+                return collider.enabled;
+            }
+            return true; // enabled状態がないComponentはtrueとして扱う
+        }
+
         private static bool VectorEquals(Vector3 a, Vector3 b, float epsilon = 0.0001f)
         {
             return Mathf.Abs(a.x - b.x) < epsilon &&
@@ -411,6 +599,7 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+            public Dictionary<string, string> ComponentDataCache = new Dictionary<string, string>(); // ComponentType -> SerializedData
         }
 
         [System.Serializable]
@@ -436,6 +625,34 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        private class ComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType; // Component型の完全修飾名
+            public string SerializedData; // JsonUtilityでシリアライズされたデータ
+            public bool Enabled; // Component.enabled状態
+        }
+
+        [System.Serializable]
+        private class AddComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public string SerializedData;
+            public bool Enabled;
+        }
+
+        [System.Serializable]
+        private class RemoveComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
         }
     }
 }

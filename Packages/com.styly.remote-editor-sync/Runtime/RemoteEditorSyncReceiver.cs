@@ -78,6 +78,18 @@ namespace RemoteEditorSync
                     case "UpdateTransform":
                         HandleUpdateTransform(args);
                         break;
+
+                    case "AddComponent":
+                        HandleAddComponent(args);
+                        break;
+
+                    case "RemoveComponent":
+                        HandleRemoveComponent(args);
+                        break;
+
+                    case "UpdateComponent":
+                        HandleUpdateComponent(args);
+                        break;
                 }
             }
             catch (System.Exception e)
@@ -360,6 +372,185 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        private class ComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public string SerializedData;
+            public bool Enabled;
+        }
+
+        [System.Serializable]
+        private class AddComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public string SerializedData;
+            public bool Enabled;
+        }
+
+        [System.Serializable]
+        private class RemoveComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+        }
+
+        private void HandleAddComponent(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<AddComponentData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var scene = SceneManager.GetSceneByName(data.SceneName);
+            if (!scene.IsValid())
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Scene not found: {data.SceneName}");
+                return;
+            }
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            // Component型を取得
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            // 既に同じ型のComponentがある場合はスキップ（一部のComponentは複数追加できないため）
+            var existingComponent = go.GetComponent(componentType);
+            if (existingComponent != null)
+            {
+                Debug.Log($"[RemoteEditorSyncReceiver] Component already exists: {componentType.Name}");
+                // 既存のComponentを更新
+                ApplyComponentData(existingComponent, data.SerializedData, data.Enabled);
+                return;
+            }
+
+            // Componentを追加
+            var component = go.AddComponent(componentType);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to add component: {componentType.Name}");
+                return;
+            }
+
+            // シリアライズデータを適用
+            ApplyComponentData(component, data.SerializedData, data.Enabled);
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Added component: {data.SceneName}/{data.Path} - {componentType.Name}");
+        }
+
+        private void HandleRemoveComponent(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<RemoveComponentData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            var component = go.GetComponent(componentType);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found: {componentType.Name}");
+                return;
+            }
+
+            Destroy(component);
+            Debug.Log($"[RemoteEditorSyncReceiver] Removed component: {data.SceneName}/{data.Path} - {componentType.Name}");
+        }
+
+        private void HandleUpdateComponent(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<ComponentData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            var component = go.GetComponent(componentType);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found: {componentType.Name}");
+                return;
+            }
+
+            // シリアライズデータを適用
+            ApplyComponentData(component, data.SerializedData, data.Enabled);
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Updated component: {data.SceneName}/{data.Path} - {componentType.Name}");
+        }
+
+        private void ApplyComponentData(Component component, string serializedData, bool enabled)
+        {
+            if (component == null) return;
+
+            // シリアライズデータを適用
+            if (!string.IsNullOrEmpty(serializedData))
+            {
+                try
+                {
+                    JsonUtility.FromJsonOverwrite(serializedData, component);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to apply serialized data to component '{component.GetType().Name}': {e.Message}");
+                }
+            }
+
+            // enabled状態を適用
+            if (component is Behaviour behaviour)
+            {
+                behaviour.enabled = enabled;
+            }
+            else if (component is Renderer renderer)
+            {
+                renderer.enabled = enabled;
+            }
+            else if (component is Collider collider)
+            {
+                collider.enabled = enabled;
+            }
         }
     }
 }
