@@ -87,7 +87,7 @@ namespace RemoteEditorSync
         {
             var autoSyncStatus = RemoteEditorSync.AutoSyncEnabled ? "有効" : "無効";
             EditorUtility.DisplayDialog(
-                "STYLY Remote Editor Sync v1.2.2",
+                "STYLY Remote Editor Sync v1.2.3",
                 "Remote Editor Sync - Unity Editorの変更をクライアントにリアルタイム反映\n\n" +
                 $"現在の状態: 自動同期 {autoSyncStatus}\n" +
                 "(Tools > Remote Editor Sync > Enable Auto Sync で切り替え)\n\n" +
