@@ -36,7 +36,7 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 
 1. Open Unity Package Manager (`Window` > `Package Manager`)
 2. Click `+` button → `Add package from git URL`
-3. Enter: `https://github.com/your-repo/com.styly.remote-editor-sync.git`
+3. Enter: `https://github.com/afjk/remote-editor-sync.git?path=/Packages/com.styly.remote-editor-sync#main`
 
 ### Manual Installation
 
@@ -309,7 +309,7 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 ## Support
 
 For questions, issues, or feature requests:
-- 📝 GitHub Issues: [Create an issue](https://github.com/your-repo/issues)
+- 📝 GitHub Issues: [Create an issue](https://github.com/afjk/remote-editor-sync/issues)
 - 📧 Email: support@example.com
 
 ---

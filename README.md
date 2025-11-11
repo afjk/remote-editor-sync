@@ -31,7 +31,7 @@ Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via
 2. Click `+` button → `Add package from git URL`
 3. Enter the following URL:
    ```
-   https://github.com/YOUR_USERNAME/runtime-hierarchy.git?path=/Packages/com.styly.remote-editor-sync
+   https://github.com/afjk/remote-editor-sync.git?path=/Packages/com.styly.remote-editor-sync#main
    ```
 
 ### Via OpenUPM (Coming Soon)
@@ -136,7 +136,7 @@ For detailed documentation, see:
 ## 📁 Project Structure
 
 ```
-runtime-hierarchy/
+remote-editor-sync/
 ├── Packages/
 │   └── com.styly.remote-editor-sync/     # Main package
 │       ├── Editor/                       # Editor scripts
@@ -170,8 +170,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Support
 
-- 📝 [GitHub Issues](https://github.com/YOUR_USERNAME/runtime-hierarchy/issues)
-- 💬 [Discussions](https://github.com/YOUR_USERNAME/runtime-hierarchy/discussions)
+- 📝 [GitHub Issues](https://github.com/afjk/remote-editor-sync/issues)
+- 💬 [Discussions](https://github.com/afjk/remote-editor-sync/discussions)
 
 ## 🌟 Star History
 
