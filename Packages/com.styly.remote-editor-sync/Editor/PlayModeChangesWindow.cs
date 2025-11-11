@@ -31,6 +31,27 @@ namespace RemoteEditorSync
             }
 
             EditorGUILayout.LabelField($"Play中の変更: {changes.Count}件", EditorStyles.boldLabel);
+
+            // シーンのサマリー表示
+            var sceneNames = changes.Select(c => c.SceneName).Distinct().ToList();
+            var sceneInfo = string.Join(", ", sceneNames);
+            EditorGUILayout.LabelField($"対象シーン: {sceneInfo}", EditorStyles.miniLabel);
+
+            // 開いていないシーンがある場合、警告表示
+            var unopenedScenes = sceneNames.Where(sceneName =>
+            {
+                var scene = UnityEditor.SceneManagement.EditorSceneManager.GetSceneByName(sceneName);
+                return !scene.IsValid() || !scene.isLoaded;
+            }).ToList();
+
+            if (unopenedScenes.Count > 0)
+            {
+                EditorGUILayout.HelpBox(
+                    $"警告: {unopenedScenes.Count}個のシーンが現在開いていません（{string.Join(", ", unopenedScenes)}）\n" +
+                    "適用時に自動的に開きます。",
+                    MessageType.Warning);
+            }
+
             EditorGUILayout.Space();
 
             // 全選択/全解除ボタン
@@ -124,6 +145,65 @@ namespace RemoteEditorSync
                 return;
             }
 
+            // 必要なシーンをチェック
+            var requiredScenes = changes.Select(c => c.SceneName).Distinct().ToList();
+            var scenesToLoad = new List<string>();
+
+            foreach (var sceneName in requiredScenes)
+            {
+                var scene = EditorSceneManager.GetSceneByName(sceneName);
+                if (!scene.IsValid() || !scene.isLoaded)
+                {
+                    scenesToLoad.Add(sceneName);
+                }
+            }
+
+            // 開いていないシーンがある場合、警告とシーン開く確認
+            if (scenesToLoad.Count > 0)
+            {
+                var sceneList = string.Join("\n  - ", scenesToLoad);
+                if (!EditorUtility.DisplayDialog(
+                    "シーンを開く必要があります",
+                    $"以下のシーンが現在開いていません：\n  - {sceneList}\n\n" +
+                    $"これらのシーンを追加で開いて変更を適用しますか？\n" +
+                    $"（適用後もシーンは開いたままになります）",
+                    "シーンを開いて適用",
+                    "キャンセル"))
+                {
+                    return;
+                }
+
+                // シーンを開く
+                foreach (var sceneName in scenesToLoad)
+                {
+                    // シーンファイルを検索
+                    var sceneGuids = UnityEditor.AssetDatabase.FindAssets($"t:Scene {sceneName}");
+                    if (sceneGuids.Length == 0)
+                    {
+                        EditorUtility.DisplayDialog(
+                            "エラー",
+                            $"シーン '{sceneName}' が見つかりませんでした。\n\n" +
+                            $"Assets内に該当するシーンファイルが存在するか確認してください。",
+                            "OK");
+                        return;
+                    }
+
+                    var scenePath = UnityEditor.AssetDatabase.GUIDToAssetPath(sceneGuids[0]);
+                    var loadedScene = EditorSceneManager.OpenScene(scenePath, UnityEditor.SceneManagement.OpenSceneMode.Additive);
+
+                    if (!loadedScene.IsValid())
+                    {
+                        EditorUtility.DisplayDialog(
+                            "エラー",
+                            $"シーン '{sceneName}' を開けませんでした。",
+                            "OK");
+                        return;
+                    }
+
+                    Debug.Log($"[PlayModeChangesWindow] Opened scene: {sceneName} ({scenePath})");
+                }
+            }
+
             if (!EditorUtility.DisplayDialog(
                 "変更を適用",
                 $"{changes.Count}件の変更をEdit modeシーンに適用します。\n\nこの操作は取り消せません。続行しますか？",
@@ -173,8 +253,9 @@ namespace RemoteEditorSync
             var scene = EditorSceneManager.GetSceneByName(change.SceneName);
             if (!scene.IsValid() || !scene.isLoaded)
             {
-                Debug.LogWarning($"[PlayModeChangesWindow] Scene not found or not loaded: {change.SceneName}");
-                return;
+                // この時点でシーンが開いていない場合は予期しないエラー
+                Debug.LogError($"[PlayModeChangesWindow] Scene not loaded (this should not happen): {change.SceneName}");
+                throw new System.Exception($"Scene '{change.SceneName}' is not loaded. This is an internal error.");
             }
 
             switch (change.Type)
