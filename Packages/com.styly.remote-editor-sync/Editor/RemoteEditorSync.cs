@@ -426,6 +426,10 @@ namespace RemoteEditorSync
             foreach (var typeName in oldComponentTypes.Except(newComponentTypes))
             {
                 SendRemoveComponent(go.scene.name, newPath, typeName);
+
+                // キャッシュから削除
+                oldState.ComponentDataCache.Remove(typeName);
+                oldState.ComponentEnabledCache.Remove(typeName);
             }
 
             // 既存Componentのプロパティ変更チェック
@@ -434,12 +438,32 @@ namespace RemoteEditorSync
                 if (currentComponents.TryGetValue(typeName, out var component))
                 {
                     var newData = SerializeComponent(component);
+                    var newEnabled = GetComponentEnabled(component);
+                    var dataChanged = false;
+                    var enabledChanged = false;
+
+                    // データの変更チェック
                     if (newData != null && oldState.ComponentDataCache.TryGetValue(typeName, out var oldData))
                     {
                         if (newData != oldData)
                         {
-                            SendUpdateComponent(go, component);
+                            dataChanged = true;
                         }
+                    }
+
+                    // enabled状態の変更チェック
+                    if (oldState.ComponentEnabledCache.TryGetValue(typeName, out var oldEnabled))
+                    {
+                        if (newEnabled != oldEnabled)
+                        {
+                            enabledChanged = true;
+                        }
+                    }
+
+                    // いずれかの変更があれば送信
+                    if (dataChanged || enabledChanged)
+                    {
+                        SendUpdateComponent(go, component);
                     }
                 }
             }
@@ -481,6 +505,7 @@ namespace RemoteEditorSync
             if (_trackedObjects.TryGetValue(id, out var state))
             {
                 state.ComponentDataCache[typeName] = serializedData;
+                state.ComponentEnabledCache[typeName] = data.Enabled;
             }
 
             Debug.Log($"[RemoteEditorSync] AddComponent: {go.name} - {component.GetType().Name}");
@@ -525,6 +550,7 @@ namespace RemoteEditorSync
             if (_trackedObjects.TryGetValue(id, out var state))
             {
                 state.ComponentDataCache[typeName] = serializedData;
+                state.ComponentEnabledCache[typeName] = data.Enabled;
             }
 
             Debug.Log($"[RemoteEditorSync] UpdateComponent: {go.name} - {component.GetType().Name}");
@@ -600,6 +626,7 @@ namespace RemoteEditorSync
             public Vector3 Rotation;
             public Vector3 Scale;
             public Dictionary<string, string> ComponentDataCache = new Dictionary<string, string>(); // ComponentType -> SerializedData
+            public Dictionary<string, bool> ComponentEnabledCache = new Dictionary<string, bool>(); // ComponentType -> Enabled状態
         }
 
         [System.Serializable]
