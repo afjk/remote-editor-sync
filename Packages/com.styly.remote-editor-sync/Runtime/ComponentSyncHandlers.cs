@@ -55,6 +55,7 @@ namespace RemoteEditorSync
                 try
                 {
                     var value = prop.GetValue(component);
+                    value = PrepareValueForSerialization(value);
                     result[prop.Name] = value;
                 }
                 catch
@@ -118,6 +119,43 @@ namespace RemoteEditorSync
                     return true;
                 default:
                     return false;
+            }
+        }
+
+        protected virtual object PrepareValueForSerialization(object value)
+        {
+            switch (value)
+            {
+                case Vector2 v2:
+                    return new SerializableVector2(v2);
+                case Vector3 v3:
+                    return new SerializableVector3(v3);
+                case Vector4 v4:
+                    return new SerializableVector4(v4);
+                case Vector2Int v2Int:
+                    return new SerializableVector2Int(v2Int);
+                case Vector3Int v3Int:
+                    return new SerializableVector3Int(v3Int);
+                case Quaternion quaternion:
+                    return new SerializableQuaternion(quaternion);
+                case Color color:
+                    return new SerializableColor(color);
+                case Color32 color32:
+                    return new SerializableColor32(color32);
+                case Rect rect:
+                    return new SerializableRect(rect);
+                case RectInt rectInt:
+                    return new SerializableRectInt(rectInt);
+                case Bounds bounds:
+                    return new SerializableBounds(bounds);
+                case BoundsInt boundsInt:
+                    return new SerializableBoundsInt(boundsInt);
+                case Matrix4x4 matrix:
+                    return new SerializableMatrix4x4(matrix);
+                case LayerMask layerMask:
+                    return layerMask.value;
+                default:
+                    return value;
             }
         }
 
