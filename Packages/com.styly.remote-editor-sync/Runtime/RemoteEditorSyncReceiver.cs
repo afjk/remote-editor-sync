@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using System.Collections.Generic;
+using System.Reflection;
 using Styly.NetSync;
 using Newtonsoft.Json;
 
@@ -338,15 +339,13 @@ namespace RemoteEditorSync
             switch (component)
             {
                 case Slider slider:
-                    // valueプロパティに再代入することでSetterを呼び、UpdateVisualsをトリガー
-                    float sliderValue = slider.value;
-                    slider.value = sliderValue;
+                    // Reflectionでprotectedメソッド UpdateVisuals() を呼び出し
+                    InvokeUpdateVisuals(slider);
                     break;
 
                 case Scrollbar scrollbar:
-                    // valueプロパティに再代入することでSetterを呼び、UpdateVisualsをトリガー
-                    float scrollbarValue = scrollbar.value;
-                    scrollbar.value = scrollbarValue;
+                    // Reflectionでprotectedメソッド UpdateVisuals() を呼び出し
+                    InvokeUpdateVisuals(scrollbar);
                     break;
 
                 case Toggle toggle:
@@ -389,6 +388,36 @@ namespace RemoteEditorSync
                 default:
                     // その他のコンポーネントは特別な処理なし
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Reflectionを使ってprotectedメソッド UpdateVisuals() を呼び出す
+        /// </summary>
+        private void InvokeUpdateVisuals(Selectable selectable)
+        {
+            if (selectable == null) return;
+
+            try
+            {
+                // UpdateVisualsメソッドを取得（protectedメソッド）
+                MethodInfo updateVisualsMethod = selectable.GetType().GetMethod(
+                    "UpdateVisuals",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+                if (updateVisualsMethod != null)
+                {
+                    updateVisualsMethod.Invoke(selectable, null);
+                    Debug.Log($"[RemoteEditorSyncReceiver] Called UpdateVisuals() on {selectable.GetType().Name}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] UpdateVisuals method not found on {selectable.GetType().Name}");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[RemoteEditorSyncReceiver] Failed to invoke UpdateVisuals: {e.Message}");
             }
         }
 
