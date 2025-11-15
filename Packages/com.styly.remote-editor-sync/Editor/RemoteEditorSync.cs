@@ -187,6 +187,35 @@ namespace RemoteEditorSync
                             SendObjectUpdate(parentChangedGo);
                         }
                         break;
+
+                    case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
+                        stream.GetChangeGameObjectOrComponentPropertiesEvent(i, out var propEvent);
+                        var changedObj = EditorUtility.InstanceIDToObject(propEvent.instanceId);
+
+                        if (changedObj is GameObject go && ShouldSync(go))
+                        {
+                            Debug.Log($"[RemoteEditorSync] GameObject properties changed: {go.name}");
+                            DetectAndSyncComponentChanges(go);
+                            SendObjectUpdate(go);
+                        }
+                        else if (changedObj is Component comp && ShouldSync(comp.gameObject))
+                        {
+                            Debug.Log($"[RemoteEditorSync] Component properties changed: {comp.GetType().Name} on {comp.gameObject.name}");
+                            SyncComponentIfChanged(comp);
+                        }
+                        break;
+
+                    case ObjectChangeKind.ChangeGameObjectStructure:
+                        stream.GetChangeGameObjectStructureEvent(i, out var structureEvent);
+                        var structureGo = EditorUtility.InstanceIDToObject(structureEvent.instanceId) as GameObject;
+                        Debug.Log($"[RemoteEditorSync] ChangeGameObjectStructure detected: {structureGo?.name ?? "null"}");
+
+                        if (structureGo != null && ShouldSync(structureGo))
+                        {
+                            DetectAndSyncComponentChanges(structureGo);
+                            SendObjectUpdate(structureGo);
+                        }
+                        break;
                 }
             }
         }
@@ -210,11 +239,13 @@ namespace RemoteEditorSync
 
             // 変更されたオブジェクトごとにグループ化
             var modifiedObjects = new HashSet<GameObject>();
+            var modifiedComponents = new HashSet<Component>();
 
             foreach (var mod in modifications)
             {
                 if (mod.currentValue?.target is Component component)
                 {
+                    modifiedComponents.Add(component);
                     modifiedObjects.Add(component.gameObject);
                 }
                 else if (mod.currentValue?.target is GameObject go)
@@ -223,11 +254,20 @@ namespace RemoteEditorSync
                 }
             }
 
+            foreach (var component in modifiedComponents)
+            {
+                if (component != null && ShouldSync(component.gameObject))
+                {
+                    SyncComponentIfChanged(component);
+                }
+            }
+
             // 各オブジェクトの変更を送信
             foreach (var go in modifiedObjects)
             {
                 if (go != null && ShouldSync(go))
                 {
+                    DetectAndSyncComponentChanges(go);
                     SendObjectUpdate(go);
                 }
             }
@@ -235,20 +275,107 @@ namespace RemoteEditorSync
             return modifications;
         }
 
+        private static void DetectAndSyncComponentChanges(GameObject go)
+        {
+            if (go == null || !ShouldSync(go))
+            {
+                return;
+            }
+
+            int instanceId = go.GetInstanceID();
+            if (!_trackedObjects.TryGetValue(instanceId, out var state))
+            {
+                _trackedObjects[instanceId] = new ObjectState(go);
+                return;
+            }
+
+            state.DetectChanges(go, out var changes);
+            foreach (var change in changes)
+            {
+                switch (change.Type)
+                {
+                    case ComponentChangeType.Added:
+                        SendAddComponent(change.Component);
+                        break;
+                    case ComponentChangeType.Modified:
+                        SendUpdateComponentProperties(change.Component);
+                        break;
+                    case ComponentChangeType.Removed:
+                        SendRemoveComponent(go, change.Signature);
+                        break;
+                }
+            }
+        }
+
+        private static void SyncComponentIfChanged(Component component)
+        {
+            if (component == null)
+            {
+                return;
+            }
+
+            var go = component.gameObject;
+            if (!ShouldSync(go))
+            {
+                return;
+            }
+
+            var instanceId = go.GetInstanceID();
+            if (!_trackedObjects.TryGetValue(instanceId, out var state))
+            {
+                _trackedObjects[instanceId] = new ObjectState(go);
+                return;
+            }
+
+            var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+            if (handler == null)
+            {
+                return;
+            }
+
+            var signature = ComponentSignature.Create(component);
+
+            if (!state.ComponentSnapshots.TryGetValue(signature, out var snapshot))
+            {
+                state.ComponentSnapshots[signature] = new ComponentSnapshot(component, handler);
+                SendAddComponent(component);
+                return;
+            }
+
+            if (snapshot.HasChanged(component, handler))
+            {
+                SendUpdateComponentProperties(component);
+                state.ComponentSnapshots[signature] = new ComponentSnapshot(component, handler);
+            }
+        }
+
         private static void CreateObjectState(GameObject go)
         {
-            var state = new ObjectState
+            if (go == null)
             {
-                InstanceId = go.GetInstanceID(),
-                SceneName = go.scene.name,
-                Path = GetGameObjectPath(go),
-                Name = go.name,
-                ActiveSelf = go.activeSelf,
-                Position = go.transform.localPosition,
-                Rotation = go.transform.localRotation.eulerAngles,
-                Scale = go.transform.localScale
-            };
+                return;
+            }
+
+            var state = new ObjectState(go);
             _trackedObjects[state.InstanceId] = state;
+        }
+
+        private static string SerializeGameObject(GameObject go)
+        {
+            if (go == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return JsonUtility.ToJson(go, false);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
+                return null;
+            }
         }
 
         private static void SendCreateGameObject(GameObject go)
@@ -258,16 +385,7 @@ namespace RemoteEditorSync
             var parentPath = go.transform.parent != null ? GetGameObjectPath(go.transform.parent.gameObject) : "";
             var primitiveType = DetectPrimitiveType(go);
 
-            // Try to serialize the GameObject
-            string serializedData = null;
-            try
-            {
-                serializedData = EditorJsonUtility.ToJson(go, false);
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
-            }
+            var serializedData = SerializeGameObject(go);
 
             var data = new CreateGameObjectData
             {
@@ -290,6 +408,101 @@ namespace RemoteEditorSync
                 data.SceneName, data.Path, data.Name, data.ParentPath,
                 data.Position, data.Rotation, data.Scale, data.ActiveSelf,
                 data.PrimitiveType, data.SerializedData);
+        }
+
+        private static void SendUpdateComponentProperties(Component component)
+        {
+            if (component == null)
+            {
+                return;
+            }
+
+            var go = component.gameObject;
+            if (!ShouldSync(go))
+            {
+                return;
+            }
+
+            var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+            if (handler == null)
+            {
+                return;
+            }
+
+            var properties = handler.ExtractProperties(component);
+            if (properties == null || properties.Count == 0)
+            {
+                return;
+            }
+
+            var data = new UpdateComponentPropertiesData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                Signature = ComponentSignature.Create(component),
+                PropertiesJson = JsonConvert.SerializeObject(properties, _jsonSettings)
+            };
+
+            SendRPC("UpdateComponentProperties", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordUpdateComponentProperties(data.SceneName, data.Path, data.Signature, data.PropertiesJson);
+
+            Debug.Log($"[RemoteEditorSync] Updated Component Properties: {component.GetType().Name} on {go.scene.name}/{data.Path}");
+        }
+
+        private static void SendAddComponent(Component component)
+        {
+            if (component == null)
+            {
+                return;
+            }
+
+            var go = component.gameObject;
+            if (!ShouldSync(go))
+            {
+                return;
+            }
+
+            var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+            if (handler == null)
+            {
+                return;
+            }
+
+            var properties = handler.ExtractProperties(component) ?? new Dictionary<string, object>();
+            var propertiesJson = properties.Count > 0 ? JsonConvert.SerializeObject(properties, _jsonSettings) : null;
+
+            var data = new AddComponentData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                Signature = ComponentSignature.Create(component),
+                PropertiesJson = propertiesJson
+            };
+
+            SendRPC("AddComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordAddComponent(data.SceneName, data.Path, data.Signature, data.PropertiesJson);
+
+            Debug.Log($"[RemoteEditorSync] Added Component: {component.GetType().Name} on {go.scene.name}/{data.Path}");
+        }
+
+        private static void SendRemoveComponent(GameObject go, ComponentSignature signature)
+        {
+            if (go == null || !ShouldSync(go))
+            {
+                return;
+            }
+
+            var data = new RemoveComponentData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                Signature = signature
+            };
+
+            SendRPC("RemoveComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordRemoveComponent(data.SceneName, data.Path, data.Signature);
+
+            Debug.Log($"[RemoteEditorSync] Removed Component: {signature.TypeName} from {go.scene.name}/{data.Path}");
         }
 
         private static void SendObjectUpdate(GameObject go)
@@ -345,6 +558,25 @@ namespace RemoteEditorSync
                 oldState.Rotation = t.localRotation.eulerAngles;
                 oldState.Scale = t.localScale;
             }
+
+            // シリアライズデータの変更チェック（Inspector編集など全般）
+            var newSerializedData = SerializeGameObject(go);
+
+            if (newSerializedData != null && newSerializedData != oldState.SerializedData)
+            {
+                Debug.Log($"[RemoteEditorSync] Serialized data changed for '{go.name}'");
+                var data = new GameObjectData
+                {
+                    SceneName = go.scene.name,
+                    Path = newPath,
+                    SerializedData = newSerializedData
+                };
+
+                SendRPC("UpdateGameObject", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+                PlayModeChangeLog.Instance.RecordUpdateGameObject(data.SceneName, data.Path, data.SerializedData);
+
+                oldState.SerializedData = newSerializedData;
+            }
         }
 
         private static void SendRPC(string functionName, string[] args)
@@ -375,6 +607,8 @@ namespace RemoteEditorSync
 
             return path;
         }
+
+        
 
         private static bool VectorEquals(Vector3 a, Vector3 b, float epsilon = 0.0001f)
         {
@@ -411,6 +645,121 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+            public string SerializedData; // EditorJsonUtility serialized GameObject data
+            public Dictionary<ComponentSignature, ComponentSnapshot> ComponentSnapshots;
+
+            public ObjectState(GameObject go)
+            {
+                InstanceId = go.GetInstanceID();
+                SceneName = go.scene.name;
+                Path = GetGameObjectPath(go);
+                Name = go.name;
+                ActiveSelf = go.activeSelf;
+                Position = go.transform.localPosition;
+                Rotation = go.transform.localRotation.eulerAngles;
+                Scale = go.transform.localScale;
+                SerializedData = SerializeGameObject(go);
+                ComponentSnapshots = new Dictionary<ComponentSignature, ComponentSnapshot>();
+                CaptureComponentSnapshots(go);
+            }
+
+            public void CaptureComponentSnapshots(GameObject go)
+            {
+                ComponentSnapshots.Clear();
+                var components = go.GetComponents<Component>();
+                foreach (var component in components)
+                {
+                    if (component == null)
+                    {
+                        continue;
+                    }
+
+                    var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                    if (handler == null)
+                    {
+                        continue;
+                    }
+
+                    var snapshot = new ComponentSnapshot(component, handler);
+                    ComponentSnapshots[snapshot.Signature] = snapshot;
+                }
+            }
+
+            public void DetectChanges(GameObject go, out List<ComponentChange> changes)
+            {
+                changes = new List<ComponentChange>();
+                var currentComponents = go.GetComponents<Component>();
+                var currentSignatures = new HashSet<ComponentSignature>();
+
+                foreach (var component in currentComponents)
+                {
+                    if (component == null)
+                    {
+                        continue;
+                    }
+
+                    var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                    if (handler == null)
+                    {
+                        continue;
+                    }
+
+                    var signature = ComponentSignature.Create(component);
+                    currentSignatures.Add(signature);
+
+                    if (!ComponentSnapshots.TryGetValue(signature, out var snapshot))
+                    {
+                        ComponentSnapshots[signature] = new ComponentSnapshot(component, handler);
+                        changes.Add(new ComponentChange
+                        {
+                            Type = ComponentChangeType.Added,
+                            Component = component
+                        });
+                    }
+                    else if (snapshot.HasChanged(component, handler))
+                    {
+                        ComponentSnapshots[signature] = new ComponentSnapshot(component, handler);
+                        changes.Add(new ComponentChange
+                        {
+                            Type = ComponentChangeType.Modified,
+                            Component = component
+                        });
+                    }
+                }
+
+                var removedSignatures = new List<ComponentSignature>();
+                foreach (var kvp in ComponentSnapshots)
+                {
+                    if (!currentSignatures.Contains(kvp.Key))
+                    {
+                        removedSignatures.Add(kvp.Key);
+                        changes.Add(new ComponentChange
+                        {
+                            Type = ComponentChangeType.Removed,
+                            Signature = kvp.Key
+                        });
+                    }
+                }
+
+                foreach (var signature in removedSignatures)
+                {
+                    ComponentSnapshots.Remove(signature);
+                }
+            }
+        }
+
+        private enum ComponentChangeType
+        {
+            Added,
+            Modified,
+            Removed
+        }
+
+        private class ComponentChange
+        {
+            public ComponentChangeType Type;
+            public Component Component;
+            public ComponentSignature Signature;
         }
 
         [System.Serializable]
@@ -436,6 +785,40 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        private class GameObjectData
+        {
+            public string SceneName;
+            public string Path;
+            public string SerializedData; // EditorJsonUtility serialized GameObject data
+        }
+
+        [System.Serializable]
+        private class UpdateComponentPropertiesData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        private class AddComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        private class RemoveComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
         }
     }
 }

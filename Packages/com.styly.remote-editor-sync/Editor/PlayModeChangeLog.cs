@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 
 namespace RemoteEditorSync
@@ -115,6 +116,121 @@ namespace RemoteEditorSync
             }
         }
 
+        public void RecordUpdateGameObject(string sceneName, string path, string serializedData)
+        {
+            // 既存のGameObject変更を上書き（同じオブジェクトなら最新の値だけ保持）
+            var existingIndex = _changes.FindLastIndex(c =>
+                c.Type == ChangeType.UpdateGameObject &&
+                c.SceneName == sceneName &&
+                c.Path == path);
+
+            var entry = new ChangeEntry
+            {
+                Type = ChangeType.UpdateGameObject,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Update: {sceneName}/{path}",
+                GameObjectData = new GameObjectData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    SerializedData = serializedData
+                }
+            };
+
+            if (existingIndex >= 0)
+            {
+                _changes[existingIndex] = entry;
+            }
+            else
+            {
+                _changes.Add(entry);
+            }
+        }
+
+        public void RecordUpdateComponentProperties(string sceneName, string path, ComponentSignature signature, string propertiesJson)
+        {
+            var typeName = GetTypeDisplayName(signature.TypeName);
+            var entry = new ChangeEntry
+            {
+                Type = ChangeType.UpdateComponentProperties,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Update Component: {typeName} on {sceneName}/{path}",
+                ComponentPropertiesData = new ComponentPropertiesData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    Signature = signature,
+                    PropertiesJson = propertiesJson
+                }
+            };
+
+            var existingIndex = _changes.FindLastIndex(c =>
+                c.Type == ChangeType.UpdateComponentProperties &&
+                c.SceneName == sceneName &&
+                c.Path == path &&
+                c.ComponentPropertiesData?.Signature.Equals(signature) == true);
+
+            if (existingIndex >= 0)
+            {
+                _changes[existingIndex] = entry;
+            }
+            else
+            {
+                _changes.Add(entry);
+            }
+        }
+
+        public void RecordAddComponent(string sceneName, string path, ComponentSignature signature, string propertiesJson)
+        {
+            var typeName = GetTypeDisplayName(signature.TypeName);
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.AddComponent,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Add Component: {typeName} on {sceneName}/{path}",
+                ComponentAddData = new ComponentAddData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    Signature = signature,
+                    PropertiesJson = propertiesJson
+                }
+            });
+        }
+
+        public void RecordRemoveComponent(string sceneName, string path, ComponentSignature signature)
+        {
+            var typeName = GetTypeDisplayName(signature.TypeName);
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.RemoveComponent,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Remove Component: {typeName} on {sceneName}/{path}",
+                ComponentRemoveData = new ComponentRemoveData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    Signature = signature
+                }
+            });
+        }
+
+        private string GetTypeDisplayName(string assemblyQualifiedName)
+        {
+            if (string.IsNullOrEmpty(assemblyQualifiedName))
+            {
+                return "<Unknown>";
+            }
+
+            var shortName = assemblyQualifiedName.Split(',')[0];
+            var lastDot = shortName.LastIndexOf('.');
+            return lastDot >= 0 ? shortName.Substring(lastDot + 1) : shortName;
+        }
+
         [System.Serializable]
         public class ChangeEntry
         {
@@ -127,6 +243,10 @@ namespace RemoteEditorSync
             // Type別データ
             public CreateGameObjectData CreateData;
             public TransformData TransformData;
+            public GameObjectData GameObjectData;
+            public ComponentPropertiesData ComponentPropertiesData;
+            public ComponentAddData ComponentAddData;
+            public ComponentRemoveData ComponentRemoveData;
             public string NewName; // Rename用
             public bool NewActive; // SetActive用
         }
@@ -137,7 +257,11 @@ namespace RemoteEditorSync
             DeleteGameObject,
             RenameGameObject,
             SetActive,
-            UpdateTransform
+            UpdateTransform,
+            UpdateGameObject,
+            UpdateComponentProperties,
+            AddComponent,
+            RemoveComponent
         }
 
         [System.Serializable]
@@ -163,6 +287,40 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        public class GameObjectData
+        {
+            public string SceneName;
+            public string Path;
+            public string SerializedData;
+        }
+
+        [System.Serializable]
+        public class ComponentPropertiesData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        public class ComponentAddData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        public class ComponentRemoveData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
         }
     }
 }
