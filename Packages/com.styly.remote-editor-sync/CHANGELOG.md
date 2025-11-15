@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2025-11-15
+
+### Added
+- **Component Property Synchronization**: Major new feature for syncing component properties
+  - `ComponentSyncHandlers.cs`: Handler system for different component types
+  - `ComponentSyncTypes.cs`: Type definitions for component signatures and snapshots
+  - Automatic detection and synchronization of component property changes
+  - Support for multiple component types:
+    - Behaviour components (enabled property)
+    - Renderer components (enabled property)
+    - Collider components (enabled property)
+    - Generic reflection-based handler for other components
+  - Supported value types:
+    - Primitives (int, float, bool, etc.) and strings
+    - Enums
+    - Unity types (Vector2/3/4, Quaternion, Color, Rect, Bounds, Matrix4x4, LayerMask)
+    - Nullable types
+  - Change detection with property snapshots
+  - Component identification by type and index
+  - Test utilities for component update simulation
+
+### Documentation
+- Updated README with component synchronization capabilities
+- Added documentation for supported component types
+- Updated limitations section to reflect new component sync support
+
 ## [1.2.3] - 2025-11-11
 
 ### Changed
