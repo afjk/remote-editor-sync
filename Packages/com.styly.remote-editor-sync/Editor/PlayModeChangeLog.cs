@@ -185,6 +185,26 @@ namespace RemoteEditorSync
             }
         }
 
+        public void RecordSetComponentEnabled(string sceneName, string path, string componentType, int componentIndex, bool enabled)
+        {
+            var typeName = componentType.Split(',')[0].Split('.').Last();
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.SetComponentEnabled,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Component Enabled: {typeName}[{componentIndex}] = {enabled}",
+                ComponentEnabledData = new ComponentEnabledData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    ComponentType = componentType,
+                    ComponentIndex = componentIndex,
+                    Enabled = enabled
+                }
+            });
+        }
+
         [System.Serializable]
         public class ChangeEntry
         {
@@ -199,6 +219,7 @@ namespace RemoteEditorSync
             public TransformData TransformData;
             public GameObjectData GameObjectData;
             public ComponentData ComponentData;
+            public ComponentEnabledData ComponentEnabledData;
             public string NewName; // Rename用
             public bool NewActive; // SetActive用
         }
@@ -211,7 +232,8 @@ namespace RemoteEditorSync
             SetActive,
             UpdateTransform,
             UpdateGameObject,
-            UpdateComponent
+            UpdateComponent,
+            SetComponentEnabled
         }
 
         [System.Serializable]
@@ -254,6 +276,16 @@ namespace RemoteEditorSync
             public string Path;
             public string ComponentType;
             public string SerializedData;
+        }
+
+        [System.Serializable]
+        public class ComponentEnabledData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public int ComponentIndex;
+            public bool Enabled;
         }
     }
 }

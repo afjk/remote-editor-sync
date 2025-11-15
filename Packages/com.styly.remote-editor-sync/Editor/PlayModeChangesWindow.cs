@@ -135,6 +135,8 @@ namespace RemoteEditorSync
                     return "🔄";
                 case PlayModeChangeLog.ChangeType.UpdateComponent:
                     return "⚙️";
+                case PlayModeChangeLog.ChangeType.SetComponentEnabled:
+                    return "🔌";
                 default:
                     return "•";
             }
@@ -291,6 +293,10 @@ namespace RemoteEditorSync
 
                 case PlayModeChangeLog.ChangeType.UpdateComponent:
                     ApplyUpdateComponent(change.ComponentData);
+                    break;
+
+                case PlayModeChangeLog.ChangeType.SetComponentEnabled:
+                    ApplySetComponentEnabled(change.ComponentEnabledData);
                     break;
             }
         }
@@ -457,6 +463,67 @@ namespace RemoteEditorSync
                 {
                     Debug.LogError($"[PlayModeChangesWindow] Failed to apply serialized data to component '{componentType.Name}': {e.Message}");
                 }
+            }
+        }
+
+        private void ApplySetComponentEnabled(PlayModeChangeLog.ComponentEnabledData data)
+        {
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+            var go = FindGameObjectByPath(scene, data.Path);
+
+            if (go == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for component enable change: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            var components = go.GetComponents(componentType);
+            if (data.ComponentIndex < 0 || data.ComponentIndex >= components.Length)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Component index out of range: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var component = components[data.ComponentIndex];
+            if (component == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Target component missing: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            Undo.RecordObject(component, "Set Component Enabled");
+
+            if (!TrySetComponentEnabled(component, data.Enabled))
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Component does not support enabled state: {componentType.Name}");
+                return;
+            }
+
+            Debug.Log($"[PlayModeChangesWindow] Set Component Enabled: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path} = {data.Enabled}");
+        }
+
+        private bool TrySetComponentEnabled(Component component, bool enabled)
+        {
+            switch (component)
+            {
+                case Behaviour behaviour:
+                    behaviour.enabled = enabled;
+                    return true;
+                case Renderer renderer:
+                    renderer.enabled = enabled;
+                    return true;
+                case Collider collider:
+                    collider.enabled = enabled;
+                    return true;
+                default:
+                    return false;
             }
         }
 

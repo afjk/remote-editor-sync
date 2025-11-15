@@ -88,6 +88,10 @@ namespace RemoteEditorSync
                     case "UpdateComponent":
                         HandleUpdateComponent(args);
                         break;
+
+                    case "SetComponentEnabled":
+                        HandleSetComponentEnabled(args);
+                        break;
                 }
             }
             catch (System.Exception e)
@@ -333,6 +337,51 @@ namespace RemoteEditorSync
             }
         }
 
+        private void HandleSetComponentEnabled(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<ComponentEnabledData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for SetComponentEnabled: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            var components = go.GetComponents(componentType);
+            if (data.ComponentIndex < 0 || data.ComponentIndex >= components.Length)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component index out of range: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var component = components[data.ComponentIndex];
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component missing: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            if (!TrySetComponentEnabled(component, data.Enabled))
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component does not support enabled property: {componentType.Name}");
+                return;
+            }
+
+            ForceComponentUpdate(component);
+            Debug.Log($"[RemoteEditorSyncReceiver] Set Component Enabled: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path} = {data.Enabled}");
+        }
+
         private void ForceComponentUpdate(Component component)
         {
             // 特定のコンポーネントタイプに対して、ランタイムでの確実な更新を行う
@@ -388,6 +437,24 @@ namespace RemoteEditorSync
                 default:
                     // その他のコンポーネントは特別な処理なし
                     break;
+            }
+        }
+
+        private bool TrySetComponentEnabled(Component component, bool enabled)
+        {
+            switch (component)
+            {
+                case Behaviour behaviour:
+                    behaviour.enabled = enabled;
+                    return true;
+                case Renderer renderer:
+                    renderer.enabled = enabled;
+                    return true;
+                case Collider collider:
+                    collider.enabled = enabled;
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -701,6 +768,16 @@ namespace RemoteEditorSync
             public string Path;
             public string ComponentType;
             public string SerializedData;
+        }
+
+        [System.Serializable]
+        private class ComponentEnabledData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public int ComponentIndex;
+            public bool Enabled;
         }
     }
 }
