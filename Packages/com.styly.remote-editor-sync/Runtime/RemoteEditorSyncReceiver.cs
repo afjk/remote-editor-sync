@@ -398,6 +398,13 @@ namespace RemoteEditorSync
         {
             if (selectable == null) return;
 
+            // Slider/Scrollbarの必須参照フィールドがnullでないか確認
+            if (!ValidateSelectableReferences(selectable))
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Skipping UpdateVisuals() on {selectable.GetType().Name}: Required references are null (likely due to cross-client instanceID serialization)");
+                return;
+            }
+
             try
             {
                 // UpdateVisualsメソッドを取得（protectedメソッド）
@@ -415,9 +422,144 @@ namespace RemoteEditorSync
                     Debug.LogWarning($"[RemoteEditorSyncReceiver] UpdateVisuals method not found on {selectable.GetType().Name}");
                 }
             }
+            catch (System.Reflection.TargetInvocationException tie)
+            {
+                // InnerExceptionに実際のエラーが含まれている
+                Debug.LogError($"[RemoteEditorSyncReceiver] Failed to invoke UpdateVisuals on {selectable.GetType().Name}: {tie.InnerException?.Message ?? tie.Message}\n{tie.InnerException?.StackTrace ?? tie.StackTrace}");
+            }
             catch (System.Exception e)
             {
-                Debug.LogError($"[RemoteEditorSyncReceiver] Failed to invoke UpdateVisuals: {e.Message}");
+                Debug.LogError($"[RemoteEditorSyncReceiver] Failed to invoke UpdateVisuals: {e.Message}\n{e.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Selectable(Slider/Scrollbar等)の必須参照フィールドが有効かチェックし、nullなら再構築を試みる
+        /// </summary>
+        private bool ValidateSelectableReferences(Selectable selectable)
+        {
+            // Scrollbar固有のチェックと再構築
+            if (selectable is Scrollbar scrollbar)
+            {
+                if (scrollbar.handleRect == null)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Scrollbar.handleRect is null on {scrollbar.gameObject.name}, attempting to reconstruct...");
+                    if (!ReconstructScrollbarReferences(scrollbar))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            // Slider固有のチェックと再構築
+            if (selectable is Slider slider)
+            {
+                if (slider.handleRect == null)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Slider.handleRect is null on {slider.gameObject.name}, attempting to reconstruct...");
+                    if (!ReconstructSliderReferences(slider))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Scrollbarの参照（handleRect等）を子オブジェクトから再構築
+        /// </summary>
+        private bool ReconstructScrollbarReferences(Scrollbar scrollbar)
+        {
+            try
+            {
+                // 標準的な階層: Scrollbar > Sliding Area > Handle
+                Transform slidingArea = scrollbar.transform.Find("Sliding Area");
+                if (slidingArea != null)
+                {
+                    Transform handle = slidingArea.Find("Handle");
+                    if (handle != null)
+                    {
+                        RectTransform handleRect = handle.GetComponent<RectTransform>();
+                        if (handleRect != null)
+                        {
+                            // Reflectionでprivateフィールド m_HandleRect を設定
+                            FieldInfo handleRectField = typeof(Scrollbar).GetField("m_HandleRect", BindingFlags.Instance | BindingFlags.NonPublic);
+                            if (handleRectField != null)
+                            {
+                                handleRectField.SetValue(scrollbar, handleRect);
+                                Debug.Log($"[RemoteEditorSyncReceiver] Successfully reconstructed Scrollbar.handleRect on {scrollbar.gameObject.name}");
+
+                                // targetGraphicも設定（Handleの画像）
+                                Graphic targetGraphic = handle.GetComponent<Graphic>();
+                                if (targetGraphic != null)
+                                {
+                                    FieldInfo targetGraphicField = typeof(Selectable).GetField("m_TargetGraphic", BindingFlags.Instance | BindingFlags.NonPublic);
+                                    targetGraphicField?.SetValue(scrollbar, targetGraphic);
+                                }
+
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to find Handle in standard hierarchy for {scrollbar.gameObject.name}");
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[RemoteEditorSyncReceiver] Error reconstructing Scrollbar references: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Sliderの参照（handleRect等）を子オブジェクトから再構築
+        /// </summary>
+        private bool ReconstructSliderReferences(Slider slider)
+        {
+            try
+            {
+                // 標準的な階層を検索: Slider > Handle Slide Area > Handle
+                Transform handleSlideArea = slider.transform.Find("Handle Slide Area");
+                if (handleSlideArea != null)
+                {
+                    Transform handle = handleSlideArea.Find("Handle");
+                    if (handle != null)
+                    {
+                        RectTransform handleRect = handle.GetComponent<RectTransform>();
+                        if (handleRect != null)
+                        {
+                            // Reflectionでprivateフィールド m_HandleRect を設定
+                            FieldInfo handleRectField = typeof(Slider).GetField("m_HandleRect", BindingFlags.Instance | BindingFlags.NonPublic);
+                            if (handleRectField != null)
+                            {
+                                handleRectField.SetValue(slider, handleRect);
+                                Debug.Log($"[RemoteEditorSyncReceiver] Successfully reconstructed Slider.handleRect on {slider.gameObject.name}");
+
+                                // targetGraphicも設定
+                                Graphic targetGraphic = handle.GetComponent<Graphic>();
+                                if (targetGraphic != null)
+                                {
+                                    FieldInfo targetGraphicField = typeof(Selectable).GetField("m_TargetGraphic", BindingFlags.Instance | BindingFlags.NonPublic);
+                                    targetGraphicField?.SetValue(slider, targetGraphic);
+                                }
+
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to find Handle in standard hierarchy for {slider.gameObject.name}");
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[RemoteEditorSyncReceiver] Error reconstructing Slider references: {e.Message}");
+                return false;
             }
         }
 
