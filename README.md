@@ -12,6 +12,7 @@ Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via
 ## ✨ Features
 
 - 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, activation, and Transform changes
+- 🧩 **Component Property Sync**: Automatically sync component properties (Behaviour, Renderer, Collider, and more)
 - 🎮 **Primitive Support**: Automatically detects and syncs Sphere, Cube, Capsule, Cylinder, Plane, Quad
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
 - 🏷️ **Tag Filtering**: Optionally sync only specific GameObjects by tag
@@ -72,6 +73,7 @@ Tools > Remote Editor Sync > Setup Scene
    - Move, rotate, scale objects
    - Toggle active/inactive
    - Rename or delete objects
+   - **Modify component properties** (e.g., Light intensity, Collider size)
 
 → **Changes appear on client in real-time!** ✨
 

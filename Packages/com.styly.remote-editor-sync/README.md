@@ -7,6 +7,7 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 ## Features
 
 - 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, activation, and Transform changes
+- 🧩 **Component Property Sync**: Automatically sync component properties (Behaviour, Renderer, Collider, and more)
 - 🎮 **Primitive Support**: Automatically detects and syncs Sphere, Cube, Capsule, Cylinder, Plane, Quad
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
 - 🏷️ **Tag Filtering**: Optionally sync only specific GameObjects by tag
@@ -23,6 +24,7 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 | **Rename GameObject** | Updates GameObject names |
 | **SetActive** | Toggles GameObject active state |
 | **Transform** | Position, Rotation, Scale changes |
+| **Component Properties** | Syncs component property changes (Behaviour, Renderer, Collider, etc.) |
 
 ## Requirements
 
@@ -74,6 +76,49 @@ Make sure `NetSyncManager` is properly configured:
    - Delete objects
 
 → Changes will appear on the client device in real-time! ✨
+
+## Component Property Synchronization
+
+In addition to GameObject operations, the system automatically synchronizes component property changes made in the Inspector.
+
+### Supported Components
+
+The following component types are automatically synchronized:
+
+- **Behaviour Components**: Includes MonoBehaviour and other script components
+  - `enabled` property
+  - Public properties with supported value types
+- **Renderer Components**: MeshRenderer, SkinnedMeshRenderer, etc.
+  - `enabled` property
+  - Other supported properties
+- **Collider Components**: BoxCollider, SphereCollider, MeshCollider, etc.
+  - `enabled` property
+  - Collider-specific properties (size, radius, etc.)
+- **Other Components**: Any component with public properties of supported types
+
+### Supported Value Types
+
+- **Primitives**: int, float, bool, double, etc.
+- **Strings**: string
+- **Enums**: Any enum type
+- **Unity Types**: Vector2/3/4, Quaternion, Color, Color32, Rect, Bounds, Matrix4x4, LayerMask
+- **Nullable Types**: Nullable versions of above types
+
+### How It Works
+
+1. Edit a component property in the Inspector during Play Mode
+2. The system detects the change using `Undo.postprocessModifications`
+3. Property values are extracted and serialized
+4. Changes are sent to clients via RPC
+5. Clients apply the property changes to their local GameObjects
+
+### Example
+
+```
+1. Select a GameObject with a Light component
+2. Change Light intensity from 1.0 to 2.0 in Inspector
+3. → All clients see the brighter light instantly!
+```
 
 ## Important: Runtime vs Editor Changes
 
@@ -191,8 +236,9 @@ If you dismiss the window, you can reopen it:
    - Multiple GameObjects with the same name at the same level may cause issues
 
 2. **Component Synchronization**
-   - Current version supports Transform and primitive types
-   - Custom component properties are not fully synced
+   - Supported components: Behaviour, Renderer, Collider, and other components with supported value types
+   - Supported value types: Primitives, strings, enums, Unity types (Vector2/3/4, Quaternion, Color, Rect, Bounds, Matrix4x4, LayerMask)
+   - Complex types (arrays, lists, custom classes) are not fully supported
    - Material/Texture references use default assets
 
 3. **Performance**
