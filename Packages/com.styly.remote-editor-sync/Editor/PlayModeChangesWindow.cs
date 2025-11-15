@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Newtonsoft.Json;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -133,10 +134,12 @@ namespace RemoteEditorSync
                     return "📐";
                 case PlayModeChangeLog.ChangeType.UpdateGameObject:
                     return "🔄";
-                case PlayModeChangeLog.ChangeType.UpdateComponent:
+                case PlayModeChangeLog.ChangeType.UpdateComponentProperties:
                     return "⚙️";
-                case PlayModeChangeLog.ChangeType.SetComponentEnabled:
-                    return "🔌";
+                case PlayModeChangeLog.ChangeType.AddComponent:
+                    return "🧩";
+                case PlayModeChangeLog.ChangeType.RemoveComponent:
+                    return "❌";
                 default:
                     return "•";
             }
@@ -291,12 +294,16 @@ namespace RemoteEditorSync
                     ApplyUpdateGameObject(change.GameObjectData);
                     break;
 
-                case PlayModeChangeLog.ChangeType.UpdateComponent:
-                    ApplyUpdateComponent(change.ComponentData);
+                case PlayModeChangeLog.ChangeType.UpdateComponentProperties:
+                    ApplyUpdateComponentProperties(change.ComponentPropertiesData);
                     break;
 
-                case PlayModeChangeLog.ChangeType.SetComponentEnabled:
-                    ApplySetComponentEnabled(change.ComponentEnabledData);
+                case PlayModeChangeLog.ChangeType.AddComponent:
+                    ApplyAddComponent(change.ComponentAddData);
+                    break;
+
+                case PlayModeChangeLog.ChangeType.RemoveComponent:
+                    ApplyRemoveComponent(change.ComponentRemoveData);
                     break;
             }
         }
@@ -428,103 +435,103 @@ namespace RemoteEditorSync
             }
         }
 
-        private void ApplyUpdateComponent(PlayModeChangeLog.ComponentData data)
+        private void ApplyUpdateComponentProperties(PlayModeChangeLog.ComponentPropertiesData data)
         {
-            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
-            var go = FindGameObjectByPath(scene, data.Path);
+            if (data == null) return;
 
-            if (go != null)
-            {
-                // ComponentTypeからTypeを取得
-                var componentType = System.Type.GetType(data.ComponentType);
-                if (componentType == null)
-                {
-                    Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.ComponentType}");
-                    return;
-                }
-
-                // Componentを取得
-                var component = go.GetComponent(componentType);
-                if (component == null)
-                {
-                    Debug.LogWarning($"[PlayModeChangesWindow] Component not found on GameObject: {componentType.Name}");
-                    return;
-                }
-
-                Undo.RecordObject(component, "Update Component");
-
-                try
-                {
-                    // JsonUtilityを使用（Runtime互換のシリアライズデータ）
-                    JsonUtility.FromJsonOverwrite(data.SerializedData, component);
-                    Debug.Log($"[PlayModeChangesWindow] Updated Component: {componentType.Name} on {data.SceneName}/{data.Path}");
-                }
-                catch (System.Exception e)
-                {
-                    Debug.LogError($"[PlayModeChangesWindow] Failed to apply serialized data to component '{componentType.Name}': {e.Message}");
-                }
-            }
-        }
-
-        private void ApplySetComponentEnabled(PlayModeChangeLog.ComponentEnabledData data)
-        {
             var scene = EditorSceneManager.GetSceneByName(data.SceneName);
             var go = FindGameObjectByPath(scene, data.Path);
 
             if (go == null)
             {
-                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for component enable change: {data.SceneName}/{data.Path}");
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for component update: {data.SceneName}/{data.Path}");
                 return;
             }
 
-            var componentType = System.Type.GetType(data.ComponentType);
-            if (componentType == null)
-            {
-                Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.ComponentType}");
-                return;
-            }
-
-            var components = go.GetComponents(componentType);
-            if (data.ComponentIndex < 0 || data.ComponentIndex >= components.Length)
-            {
-                Debug.LogWarning($"[PlayModeChangesWindow] Component index out of range: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
-                return;
-            }
-
-            var component = components[data.ComponentIndex];
+            var component = data.Signature.Resolve(go);
             if (component == null)
             {
-                Debug.LogWarning($"[PlayModeChangesWindow] Target component missing: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path}");
+                Debug.LogWarning($"[PlayModeChangesWindow] Target component missing during update: {data.Signature.TypeName} on {data.SceneName}/{data.Path}");
                 return;
             }
 
-            Undo.RecordObject(component, "Set Component Enabled");
-
-            if (!TrySetComponentEnabled(component, data.Enabled))
+            var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+            if (handler == null)
             {
-                Debug.LogWarning($"[PlayModeChangesWindow] Component does not support enabled state: {componentType.Name}");
+                Debug.LogWarning($"[PlayModeChangesWindow] No handler for component {component.GetType().Name}");
                 return;
             }
 
-            Debug.Log($"[PlayModeChangesWindow] Set Component Enabled: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path} = {data.Enabled}");
+            var properties = string.IsNullOrEmpty(data.PropertiesJson)
+                ? new Dictionary<string, object>()
+                : JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+
+            Undo.RecordObject(component, "Update Component Properties");
+            handler.ApplyProperties(component, properties ?? new Dictionary<string, object>());
+
+            Debug.Log($"[PlayModeChangesWindow] Updated Component Properties: {component.GetType().Name} on {data.SceneName}/{data.Path}");
         }
 
-        private bool TrySetComponentEnabled(Component component, bool enabled)
+        private void ApplyAddComponent(PlayModeChangeLog.ComponentAddData data)
         {
-            switch (component)
+            if (data == null) return;
+
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+            var go = FindGameObjectByPath(scene, data.Path);
+
+            if (go == null)
             {
-                case Behaviour behaviour:
-                    behaviour.enabled = enabled;
-                    return true;
-                case Renderer renderer:
-                    renderer.enabled = enabled;
-                    return true;
-                case Collider collider:
-                    collider.enabled = enabled;
-                    return true;
-                default:
-                    return false;
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for component addition: {data.SceneName}/{data.Path}");
+                return;
             }
+
+            var componentType = System.Type.GetType(data.Signature.TypeName);
+            if (componentType == null)
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.Signature.TypeName}");
+                return;
+            }
+
+            Undo.RecordObject(go, "Add Component");
+            var component = Undo.AddComponent(go, componentType);
+            if (component == null)
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Failed to add component: {componentType.Name}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                handler?.ApplyProperties(component, properties);
+            }
+
+            Debug.Log($"[PlayModeChangesWindow] Added Component: {componentType.Name} on {data.SceneName}/{data.Path}");
+        }
+
+        private void ApplyRemoveComponent(PlayModeChangeLog.ComponentRemoveData data)
+        {
+            if (data == null) return;
+
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+            var go = FindGameObjectByPath(scene, data.Path);
+
+            if (go == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for component removal: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var component = data.Signature.Resolve(go);
+            if (component == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Target component missing during removal: {data.Signature.TypeName} on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            Undo.DestroyObjectImmediate(component);
+            Debug.Log($"[PlayModeChangesWindow] Removed Component: {component.GetType().Name} from {data.SceneName}/{data.Path}");
         }
 
         private GameObject FindGameObjectByPath(UnityEngine.SceneManagement.Scene scene, string path)

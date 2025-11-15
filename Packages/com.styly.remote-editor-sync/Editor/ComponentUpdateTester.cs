@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using Newtonsoft.Json;
 using UnityEditor;
@@ -25,7 +26,7 @@ namespace RemoteEditorSync
         {
             EditorGUILayout.LabelField("Component Update Tester", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Play Mode only: sends serialized component data straight to RemoteEditorSyncReceiver.HandleUpdateComponent.",
+                "Play Mode only: sends property JSON to RemoteEditorSyncReceiver.HandleUpdateComponentProperties.",
                 MessageType.Info);
 
             EditorGUILayout.Space();
@@ -106,50 +107,35 @@ namespace RemoteEditorSync
         {
             if (_targetComponent == null) return;
 
-            var type = _targetComponent.GetType();
-
-            if (type == typeof(Slider))
+            var handler = ComponentSyncHandlerRegistry.GetHandler(_targetComponent);
+            if (handler == null)
             {
-                var slider = (Slider)_targetComponent;
-                _testJsonData = JsonUtility.ToJson(new SliderTestData
-                {
-                    m_Value = Mathf.Clamp01(slider.value + 0.25f),
-                    m_MinValue = slider.minValue,
-                    m_MaxValue = slider.maxValue
-                }, true);
-            }
-            else if (type == typeof(Toggle))
-            {
-                var toggle = (Toggle)_targetComponent;
-                _testJsonData = JsonUtility.ToJson(new ToggleTestData
-                {
-                    m_IsOn = !toggle.isOn
-                }, true);
-            }
-            else if (type == typeof(InputField))
-            {
-                var input = (InputField)_targetComponent;
-                _testJsonData = JsonUtility.ToJson(new InputFieldTestData
-                {
-                    m_Text = string.IsNullOrEmpty(input.text) ? "Test Input" : input.text + " (Test)",
-                    m_ContentType = (int)input.contentType
-                }, true);
-            }
-            else if (type == typeof(Text))
-            {
-                var text = (Text)_targetComponent;
-                _testJsonData = JsonUtility.ToJson(new TextTestData
-                {
-                    m_Text = string.IsNullOrEmpty(text.text) ? "Test Text" : text.text + " (Test)",
-                    m_FontSize = text.fontSize
-                }, true);
-            }
-            else
-            {
-                _testJsonData = JsonUtility.ToJson(_targetComponent, true);
+                EditorUtility.DisplayDialog("Remote Editor Sync", $"Handler not found for {_targetComponent.GetType().Name}.", "OK");
+                return;
             }
 
-            Debug.Log($"[ComponentUpdateTester] Generated test data for {type.Name}:\n{_testJsonData}");
+            var properties = handler.ExtractProperties(_targetComponent) ?? new Dictionary<string, object>();
+
+            switch (_targetComponent)
+            {
+                case Slider slider:
+                    properties["value"] = Mathf.Clamp01(slider.value + 0.25f);
+                    break;
+                case Toggle toggle:
+                    properties["isOn"] = !toggle.isOn;
+                    break;
+                case InputField input:
+                    properties["text"] = string.IsNullOrEmpty(input.text) ? "Test Input" : input.text + " (Test)";
+                    properties["contentType"] = input.contentType;
+                    break;
+                case Text text:
+                    properties["text"] = string.IsNullOrEmpty(text.text) ? "Test Text" : text.text + " (Test)";
+                    properties["fontSize"] = text.fontSize;
+                    break;
+            }
+
+            _testJsonData = JsonConvert.SerializeObject(properties, Formatting.Indented);
+            Debug.Log($"[ComponentUpdateTester] Generated test data for {_targetComponent.GetType().Name}:\n{_testJsonData}");
         }
 
         private void ApplyTestData()
@@ -163,12 +149,29 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var data = new ComponentUpdateData
+            Dictionary<string, object> properties = null;
+            try
+            {
+                properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(_testJsonData);
+            }
+            catch (System.Exception e)
+            {
+                EditorUtility.DisplayDialog("Remote Editor Sync", $"JSONの解析に失敗しました: {e.Message}", "OK");
+                return;
+            }
+
+            if (properties == null)
+            {
+                EditorUtility.DisplayDialog("Remote Editor Sync", "JSONデータが空です。", "OK");
+                return;
+            }
+
+            var payloadData = new ComponentPropertiesPayload
             {
                 SceneName = _targetGameObject.scene.name,
                 Path = GetGameObjectPath(_targetGameObject),
-                ComponentType = _targetComponent.GetType().AssemblyQualifiedName,
-                SerializedData = _testJsonData
+                Signature = ComponentSignature.Create(_targetComponent),
+                PropertiesJson = JsonConvert.SerializeObject(properties, Formatting.None)
             };
 
             var jsonSettings = new JsonSerializerSettings
@@ -176,10 +179,10 @@ namespace RemoteEditorSync
                 ReferenceLoopHandling = ReferenceLoopHandling.Ignore
             };
 
-            string payload = JsonConvert.SerializeObject(data, jsonSettings);
+            string payload = JsonConvert.SerializeObject(payloadData, jsonSettings);
 
             MethodInfo method = typeof(RemoteEditorSyncReceiver).GetMethod(
-                "HandleUpdateComponent",
+                "HandleUpdateComponentProperties",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
             if (method == null)
@@ -188,7 +191,7 @@ namespace RemoteEditorSync
                 return;
             }
 
-            Debug.Log($"[ComponentUpdateTester] Applying test data to {_targetComponent.GetType().Name}");
+            Debug.Log($"[ComponentUpdateTester] Applying property data to {_targetComponent.GetType().Name}");
             method.Invoke(receiver, new object[] { new[] { payload } });
             Debug.Log("[ComponentUpdateTester] Test data applied successfully");
         }
@@ -210,40 +213,12 @@ namespace RemoteEditorSync
         }
 
         [System.Serializable]
-        private class ComponentUpdateData
+        private class ComponentPropertiesPayload
         {
             public string SceneName;
             public string Path;
-            public string ComponentType;
-            public string SerializedData;
-        }
-
-        [System.Serializable]
-        private class SliderTestData
-        {
-            public float m_Value;
-            public float m_MinValue;
-            public float m_MaxValue;
-        }
-
-        [System.Serializable]
-        private class ToggleTestData
-        {
-            public bool m_IsOn;
-        }
-
-        [System.Serializable]
-        private class InputFieldTestData
-        {
-            public string m_Text;
-            public int m_ContentType;
-        }
-
-        [System.Serializable]
-        private class TextTestData
-        {
-            public string m_Text;
-            public int m_FontSize;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
         }
     }
 }

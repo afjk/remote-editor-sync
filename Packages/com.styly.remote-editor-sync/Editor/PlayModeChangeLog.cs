@@ -148,32 +148,29 @@ namespace RemoteEditorSync
             }
         }
 
-        public void RecordUpdateComponent(string sceneName, string path, string componentType, string serializedData)
+        public void RecordUpdateComponentProperties(string sceneName, string path, ComponentSignature signature, string propertiesJson)
         {
-            // 既存の同じComponent変更を上書き（同じコンポーネントなら最新の値だけ保持）
-            var existingIndex = _changes.FindLastIndex(c =>
-                c.Type == ChangeType.UpdateComponent &&
-                c.SceneName == sceneName &&
-                c.Path == path &&
-                c.ComponentData?.ComponentType == componentType);
-
-            // ComponentTypeから表示名を抽出
-            var typeName = componentType.Split(',')[0].Split('.').Last();
-
+            var typeName = GetTypeDisplayName(signature.TypeName);
             var entry = new ChangeEntry
             {
-                Type = ChangeType.UpdateComponent,
+                Type = ChangeType.UpdateComponentProperties,
                 SceneName = sceneName,
                 Path = path,
                 Description = $"Update Component: {typeName} on {sceneName}/{path}",
-                ComponentData = new ComponentData
+                ComponentPropertiesData = new ComponentPropertiesData
                 {
                     SceneName = sceneName,
                     Path = path,
-                    ComponentType = componentType,
-                    SerializedData = serializedData
+                    Signature = signature,
+                    PropertiesJson = propertiesJson
                 }
             };
+
+            var existingIndex = _changes.FindLastIndex(c =>
+                c.Type == ChangeType.UpdateComponentProperties &&
+                c.SceneName == sceneName &&
+                c.Path == path &&
+                c.ComponentPropertiesData?.Signature.Equals(signature) == true);
 
             if (existingIndex >= 0)
             {
@@ -185,24 +182,53 @@ namespace RemoteEditorSync
             }
         }
 
-        public void RecordSetComponentEnabled(string sceneName, string path, string componentType, int componentIndex, bool enabled)
+        public void RecordAddComponent(string sceneName, string path, ComponentSignature signature, string propertiesJson)
         {
-            var typeName = componentType.Split(',')[0].Split('.').Last();
+            var typeName = GetTypeDisplayName(signature.TypeName);
             _changes.Add(new ChangeEntry
             {
-                Type = ChangeType.SetComponentEnabled,
+                Type = ChangeType.AddComponent,
                 SceneName = sceneName,
                 Path = path,
-                Description = $"Component Enabled: {typeName}[{componentIndex}] = {enabled}",
-                ComponentEnabledData = new ComponentEnabledData
+                Description = $"Add Component: {typeName} on {sceneName}/{path}",
+                ComponentAddData = new ComponentAddData
                 {
                     SceneName = sceneName,
                     Path = path,
-                    ComponentType = componentType,
-                    ComponentIndex = componentIndex,
-                    Enabled = enabled
+                    Signature = signature,
+                    PropertiesJson = propertiesJson
                 }
             });
+        }
+
+        public void RecordRemoveComponent(string sceneName, string path, ComponentSignature signature)
+        {
+            var typeName = GetTypeDisplayName(signature.TypeName);
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.RemoveComponent,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Remove Component: {typeName} on {sceneName}/{path}",
+                ComponentRemoveData = new ComponentRemoveData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    Signature = signature
+                }
+            });
+        }
+
+        private string GetTypeDisplayName(string assemblyQualifiedName)
+        {
+            if (string.IsNullOrEmpty(assemblyQualifiedName))
+            {
+                return "<Unknown>";
+            }
+
+            var shortName = assemblyQualifiedName.Split(',')[0];
+            var lastDot = shortName.LastIndexOf('.');
+            return lastDot >= 0 ? shortName.Substring(lastDot + 1) : shortName;
         }
 
         [System.Serializable]
@@ -218,8 +244,9 @@ namespace RemoteEditorSync
             public CreateGameObjectData CreateData;
             public TransformData TransformData;
             public GameObjectData GameObjectData;
-            public ComponentData ComponentData;
-            public ComponentEnabledData ComponentEnabledData;
+            public ComponentPropertiesData ComponentPropertiesData;
+            public ComponentAddData ComponentAddData;
+            public ComponentRemoveData ComponentRemoveData;
             public string NewName; // Rename用
             public bool NewActive; // SetActive用
         }
@@ -232,8 +259,9 @@ namespace RemoteEditorSync
             SetActive,
             UpdateTransform,
             UpdateGameObject,
-            UpdateComponent,
-            SetComponentEnabled
+            UpdateComponentProperties,
+            AddComponent,
+            RemoveComponent
         }
 
         [System.Serializable]
@@ -270,22 +298,29 @@ namespace RemoteEditorSync
         }
 
         [System.Serializable]
-        public class ComponentData
+        public class ComponentPropertiesData
         {
             public string SceneName;
             public string Path;
-            public string ComponentType;
-            public string SerializedData;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
         }
 
         [System.Serializable]
-        public class ComponentEnabledData
+        public class ComponentAddData
         {
             public string SceneName;
             public string Path;
-            public string ComponentType;
-            public int ComponentIndex;
-            public bool Enabled;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        public class ComponentRemoveData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
         }
     }
 }

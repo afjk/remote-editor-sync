@@ -92,6 +92,18 @@ namespace RemoteEditorSync
                     case "SetComponentEnabled":
                         HandleSetComponentEnabled(args);
                         break;
+
+                    case "UpdateComponentProperties":
+                        HandleUpdateComponentProperties(args);
+                        break;
+
+                    case "AddComponent":
+                        HandleAddComponent(args);
+                        break;
+
+                    case "RemoveComponent":
+                        HandleRemoveComponent(args);
+                        break;
                 }
             }
             catch (System.Exception e)
@@ -380,6 +392,110 @@ namespace RemoteEditorSync
 
             ForceComponentUpdate(component);
             Debug.Log($"[RemoteEditorSyncReceiver] Set Component Enabled: {componentType.Name}[{data.ComponentIndex}] on {data.SceneName}/{data.Path} = {data.Enabled}");
+        }
+
+        private void HandleUpdateComponentProperties(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<UpdateComponentPropertiesData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for property update: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var component = data.Signature.Resolve(go);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found for signature: {data.Signature.TypeName}");
+                return;
+            }
+
+            var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+            if (handler == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] No handler available for {component.GetType().Name}");
+                return;
+            }
+
+            Dictionary<string, object> properties = null;
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+            }
+
+            handler.ApplyProperties(component, properties ?? new Dictionary<string, object>());
+            ForceComponentUpdate(component);
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Updated Component Properties: {component.GetType().Name} on {data.SceneName}/{data.Path}");
+        }
+
+        private void HandleAddComponent(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<AddComponentData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for component addition: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.Signature.TypeName);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.Signature.TypeName}");
+                return;
+            }
+
+            var component = go.AddComponent(componentType);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to add component of type {componentType.Name}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                handler?.ApplyProperties(component, properties);
+            }
+
+            ForceComponentUpdate(component);
+            Debug.Log($"[RemoteEditorSyncReceiver] Added component: {componentType.Name} on {data.SceneName}/{data.Path}");
+        }
+
+        private void HandleRemoveComponent(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<RemoveComponentData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for component removal: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            var component = data.Signature.Resolve(go);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found for removal: {data.Signature.TypeName}");
+                return;
+            }
+
+            Destroy(component);
+            Debug.Log($"[RemoteEditorSyncReceiver] Removed component: {data.Signature.TypeName} from {data.SceneName}/{data.Path}");
         }
 
         private void ForceComponentUpdate(Component component)
@@ -778,6 +894,32 @@ namespace RemoteEditorSync
             public string ComponentType;
             public int ComponentIndex;
             public bool Enabled;
+        }
+
+        [System.Serializable]
+        private class UpdateComponentPropertiesData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        private class AddComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
+        }
+
+        [System.Serializable]
+        private class RemoveComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public ComponentSignature Signature;
         }
     }
 }

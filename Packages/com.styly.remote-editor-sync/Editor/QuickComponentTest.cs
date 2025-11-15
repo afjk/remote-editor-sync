@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 using System.Reflection;
@@ -66,27 +67,28 @@ namespace RemoteEditorSync
 
             Debug.Log($"[QuickComponentTest] Found Scrollbar. Current value: {scrollbar.value}");
 
-            // Create test data with different value
             float newValue = scrollbar.value > 0.5f ? 0.1f : 0.9f;
             Debug.Log($"[QuickComponentTest] Generating test data with value: {newValue}");
 
-            var testData = new ScrollbarTestData
+            var handler = ComponentSyncHandlerRegistry.GetHandler(scrollbar);
+            if (handler == null)
             {
-                m_Value = newValue,
-                m_Size = scrollbar.size,
-                m_NumberOfSteps = scrollbar.numberOfSteps
-            };
+                Debug.LogError("[QuickComponentTest] No handler found for Scrollbar");
+                return;
+            }
 
-            string serializedData = JsonUtility.ToJson(testData, true);
-            Debug.Log($"[QuickComponentTest] Serialized data:\n{serializedData}");
+            var properties = handler.ExtractProperties(scrollbar) ?? new Dictionary<string, object>();
+            properties["value"] = newValue;
 
-            // Create ComponentData
-            var componentData = new ComponentUpdateData
+            string propertiesJson = JsonConvert.SerializeObject(properties, Formatting.None);
+            Debug.Log($"[QuickComponentTest] Properties JSON:\n{propertiesJson}");
+
+            var componentData = new ComponentPropertiesPayload
             {
                 SceneName = "SampleScene",
                 Path = "Canvas/Scrollbar",
-                ComponentType = typeof(UnityEngine.UI.Scrollbar).AssemblyQualifiedName,
-                SerializedData = serializedData
+                Signature = ComponentSignature.Create(scrollbar),
+                PropertiesJson = propertiesJson
             };
 
             var jsonSettings = new JsonSerializerSettings
@@ -96,9 +98,9 @@ namespace RemoteEditorSync
 
             string rpcData = JsonConvert.SerializeObject(componentData, jsonSettings);
 
-            // Call HandleUpdateComponent via Reflection
+            // Call HandleUpdateComponentProperties via Reflection
             var method = typeof(RemoteEditorSyncReceiver).GetMethod(
-                "HandleUpdateComponent",
+                "HandleUpdateComponentProperties",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
             if (method == null)
@@ -107,7 +109,7 @@ namespace RemoteEditorSync
                 return;
             }
 
-            Debug.Log("[QuickComponentTest] Calling HandleUpdateComponent...");
+            Debug.Log("[QuickComponentTest] Calling HandleUpdateComponentProperties...");
             method.Invoke(receiver, new object[] { new[] { rpcData } });
 
             // Wait a frame and check the value
@@ -129,20 +131,12 @@ namespace RemoteEditorSync
         }
 
         [System.Serializable]
-        private class ComponentUpdateData
+        private class ComponentPropertiesPayload
         {
             public string SceneName;
             public string Path;
-            public string ComponentType;
-            public string SerializedData;
-        }
-
-        [System.Serializable]
-        private class ScrollbarTestData
-        {
-            public float m_Value;
-            public float m_Size;
-            public int m_NumberOfSteps;
+            public ComponentSignature Signature;
+            public string PropertiesJson;
         }
     }
 }
