@@ -131,6 +131,10 @@ namespace RemoteEditorSync
                     return "👁";
                 case PlayModeChangeLog.ChangeType.UpdateTransform:
                     return "📐";
+                case PlayModeChangeLog.ChangeType.UpdateGameObject:
+                    return "🔄";
+                case PlayModeChangeLog.ChangeType.UpdateComponent:
+                    return "⚙️";
                 default:
                     return "•";
             }
@@ -280,6 +284,14 @@ namespace RemoteEditorSync
                 case PlayModeChangeLog.ChangeType.UpdateTransform:
                     ApplyUpdateTransform(change.TransformData);
                     break;
+
+                case PlayModeChangeLog.ChangeType.UpdateGameObject:
+                    ApplyUpdateGameObject(change.GameObjectData);
+                    break;
+
+                case PlayModeChangeLog.ChangeType.UpdateComponent:
+                    ApplyUpdateComponent(change.ComponentData);
+                    break;
             }
         }
 
@@ -385,6 +397,66 @@ namespace RemoteEditorSync
                 go.transform.localRotation = Quaternion.Euler(data.Rotation);
                 go.transform.localScale = data.Scale;
                 Debug.Log($"[PlayModeChangesWindow] Updated Transform: {data.SceneName}/{data.Path}");
+            }
+        }
+
+        private void ApplyUpdateGameObject(PlayModeChangeLog.GameObjectData data)
+        {
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+            var go = FindGameObjectByPath(scene, data.Path);
+
+            if (go != null)
+            {
+                Undo.RecordObject(go, "Update GameObject");
+
+                try
+                {
+                    // JsonUtilityを使用（Runtime互換のシリアライズデータ）
+                    JsonUtility.FromJsonOverwrite(data.SerializedData, go);
+                    Debug.Log($"[PlayModeChangesWindow] Updated GameObject: {data.SceneName}/{data.Path}");
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"[PlayModeChangesWindow] Failed to apply serialized data to '{data.Path}': {e.Message}");
+                }
+            }
+        }
+
+        private void ApplyUpdateComponent(PlayModeChangeLog.ComponentData data)
+        {
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+            var go = FindGameObjectByPath(scene, data.Path);
+
+            if (go != null)
+            {
+                // ComponentTypeからTypeを取得
+                var componentType = System.Type.GetType(data.ComponentType);
+                if (componentType == null)
+                {
+                    Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.ComponentType}");
+                    return;
+                }
+
+                // Componentを取得
+                var component = go.GetComponent(componentType);
+                if (component == null)
+                {
+                    Debug.LogWarning($"[PlayModeChangesWindow] Component not found on GameObject: {componentType.Name}");
+                    return;
+                }
+
+                Undo.RecordObject(component, "Update Component");
+
+                try
+                {
+                    // JsonUtilityを使用（Runtime互換のシリアライズデータ）
+                    JsonUtility.FromJsonOverwrite(data.SerializedData, component);
+                    Debug.Log($"[PlayModeChangesWindow] Updated Component: {componentType.Name} on {data.SceneName}/{data.Path}");
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"[PlayModeChangesWindow] Failed to apply serialized data to component '{componentType.Name}': {e.Message}");
+                }
             }
         }
 

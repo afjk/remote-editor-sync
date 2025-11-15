@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 
 namespace RemoteEditorSync
@@ -115,6 +116,75 @@ namespace RemoteEditorSync
             }
         }
 
+        public void RecordUpdateGameObject(string sceneName, string path, string serializedData)
+        {
+            // 既存のGameObject変更を上書き（同じオブジェクトなら最新の値だけ保持）
+            var existingIndex = _changes.FindLastIndex(c =>
+                c.Type == ChangeType.UpdateGameObject &&
+                c.SceneName == sceneName &&
+                c.Path == path);
+
+            var entry = new ChangeEntry
+            {
+                Type = ChangeType.UpdateGameObject,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Update: {sceneName}/{path}",
+                GameObjectData = new GameObjectData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    SerializedData = serializedData
+                }
+            };
+
+            if (existingIndex >= 0)
+            {
+                _changes[existingIndex] = entry;
+            }
+            else
+            {
+                _changes.Add(entry);
+            }
+        }
+
+        public void RecordUpdateComponent(string sceneName, string path, string componentType, string serializedData)
+        {
+            // 既存の同じComponent変更を上書き（同じコンポーネントなら最新の値だけ保持）
+            var existingIndex = _changes.FindLastIndex(c =>
+                c.Type == ChangeType.UpdateComponent &&
+                c.SceneName == sceneName &&
+                c.Path == path &&
+                c.ComponentData?.ComponentType == componentType);
+
+            // ComponentTypeから表示名を抽出
+            var typeName = componentType.Split(',')[0].Split('.').Last();
+
+            var entry = new ChangeEntry
+            {
+                Type = ChangeType.UpdateComponent,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Update Component: {typeName} on {sceneName}/{path}",
+                ComponentData = new ComponentData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    ComponentType = componentType,
+                    SerializedData = serializedData
+                }
+            };
+
+            if (existingIndex >= 0)
+            {
+                _changes[existingIndex] = entry;
+            }
+            else
+            {
+                _changes.Add(entry);
+            }
+        }
+
         [System.Serializable]
         public class ChangeEntry
         {
@@ -127,6 +197,8 @@ namespace RemoteEditorSync
             // Type別データ
             public CreateGameObjectData CreateData;
             public TransformData TransformData;
+            public GameObjectData GameObjectData;
+            public ComponentData ComponentData;
             public string NewName; // Rename用
             public bool NewActive; // SetActive用
         }
@@ -137,7 +209,9 @@ namespace RemoteEditorSync
             DeleteGameObject,
             RenameGameObject,
             SetActive,
-            UpdateTransform
+            UpdateTransform,
+            UpdateGameObject,
+            UpdateComponent
         }
 
         [System.Serializable]
@@ -163,6 +237,23 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        public class GameObjectData
+        {
+            public string SceneName;
+            public string Path;
+            public string SerializedData;
+        }
+
+        [System.Serializable]
+        public class ComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public string SerializedData;
         }
     }
 }

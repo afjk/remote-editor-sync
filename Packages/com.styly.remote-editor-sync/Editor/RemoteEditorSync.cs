@@ -187,6 +187,22 @@ namespace RemoteEditorSync
                             SendObjectUpdate(parentChangedGo);
                         }
                         break;
+
+                    case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
+                        stream.GetChangeGameObjectOrComponentPropertiesEvent(i, out var propEvent);
+                        var changedObj = EditorUtility.InstanceIDToObject(propEvent.instanceId);
+
+                        if (changedObj is GameObject go && ShouldSync(go))
+                        {
+                            Debug.Log($"[RemoteEditorSync] GameObject properties changed: {go.name}");
+                            SendObjectUpdate(go);
+                        }
+                        else if (changedObj is Component comp && ShouldSync(comp.gameObject))
+                        {
+                            Debug.Log($"[RemoteEditorSync] Component properties changed: {comp.GetType().Name} on {comp.gameObject.name}");
+                            SendComponentUpdate(comp);
+                        }
+                        break;
                 }
             }
         }
@@ -237,6 +253,17 @@ namespace RemoteEditorSync
 
         private static void CreateObjectState(GameObject go)
         {
+            string serializedData = null;
+            try
+            {
+                // Runtime互換のため JsonUtility を使用
+                serializedData = JsonUtility.ToJson(go, false);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
+            }
+
             var state = new ObjectState
             {
                 InstanceId = go.GetInstanceID(),
@@ -246,7 +273,8 @@ namespace RemoteEditorSync
                 ActiveSelf = go.activeSelf,
                 Position = go.transform.localPosition,
                 Rotation = go.transform.localRotation.eulerAngles,
-                Scale = go.transform.localScale
+                Scale = go.transform.localScale,
+                SerializedData = serializedData
             };
             _trackedObjects[state.InstanceId] = state;
         }
@@ -262,7 +290,8 @@ namespace RemoteEditorSync
             string serializedData = null;
             try
             {
-                serializedData = EditorJsonUtility.ToJson(go, false);
+                // Runtime互換のため JsonUtility を使用
+                serializedData = JsonUtility.ToJson(go, false);
             }
             catch (System.Exception e)
             {
@@ -290,6 +319,41 @@ namespace RemoteEditorSync
                 data.SceneName, data.Path, data.Name, data.ParentPath,
                 data.Position, data.Rotation, data.Scale, data.ActiveSelf,
                 data.PrimitiveType, data.SerializedData);
+        }
+
+        private static void SendComponentUpdate(Component component)
+        {
+            if (component == null) return;
+
+            var go = component.gameObject;
+            if (!ShouldSync(go)) return;
+
+            string componentType = component.GetType().AssemblyQualifiedName;
+            string serializedData = null;
+
+            try
+            {
+                // Runtime互換のため JsonUtility を使用
+                serializedData = JsonUtility.ToJson(component, false);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize Component '{componentType}': {e.Message}");
+                return;
+            }
+
+            var data = new ComponentData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                ComponentType = componentType,
+                SerializedData = serializedData
+            };
+
+            SendRPC("UpdateComponent", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordUpdateComponent(data.SceneName, data.Path, data.ComponentType, data.SerializedData);
+
+            Debug.Log($"[RemoteEditorSync] Updated Component: {componentType} on {go.scene.name}/{data.Path}");
         }
 
         private static void SendObjectUpdate(GameObject go)
@@ -344,6 +408,34 @@ namespace RemoteEditorSync
                 oldState.Position = t.localPosition;
                 oldState.Rotation = t.localRotation.eulerAngles;
                 oldState.Scale = t.localScale;
+            }
+
+            // シリアライズデータの変更チェック（Inspector編集など全般）
+            string newSerializedData = null;
+            try
+            {
+                // Runtime互換のため JsonUtility を使用
+                newSerializedData = JsonUtility.ToJson(go, false);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
+            }
+
+            if (newSerializedData != null && newSerializedData != oldState.SerializedData)
+            {
+                Debug.Log($"[RemoteEditorSync] Serialized data changed for '{go.name}'");
+                var data = new GameObjectData
+                {
+                    SceneName = go.scene.name,
+                    Path = newPath,
+                    SerializedData = newSerializedData
+                };
+
+                SendRPC("UpdateGameObject", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+                PlayModeChangeLog.Instance.RecordUpdateGameObject(data.SceneName, data.Path, data.SerializedData);
+
+                oldState.SerializedData = newSerializedData;
             }
         }
 
@@ -411,6 +503,7 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+            public string SerializedData; // EditorJsonUtility serialized GameObject data
         }
 
         [System.Serializable]
@@ -436,6 +529,23 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        private class GameObjectData
+        {
+            public string SceneName;
+            public string Path;
+            public string SerializedData; // EditorJsonUtility serialized GameObject data
+        }
+
+        [System.Serializable]
+        private class ComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType; // Assembly Qualified Name
+            public string SerializedData; // EditorJsonUtility serialized Component data
         }
     }
 }

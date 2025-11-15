@@ -78,6 +78,14 @@ namespace RemoteEditorSync
                     case "UpdateTransform":
                         HandleUpdateTransform(args);
                         break;
+
+                    case "UpdateGameObject":
+                        HandleUpdateGameObject(args);
+                        break;
+
+                    case "UpdateComponent":
+                        HandleUpdateComponent(args);
+                        break;
                 }
             }
             catch (System.Exception e)
@@ -239,6 +247,118 @@ namespace RemoteEditorSync
             }
         }
 
+        private void HandleUpdateGameObject(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<GameObjectData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go != null)
+            {
+                try
+                {
+                    JsonUtility.FromJsonOverwrite(data.SerializedData, go);
+                    Debug.Log($"[RemoteEditorSyncReceiver] Updated GameObject: {data.SceneName}/{data.Path}");
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to apply serialized data to '{data.Path}': {e.Message}");
+                }
+            }
+        }
+
+        private void HandleUpdateComponent(string[] args)
+        {
+            Debug.Log($"[RemoteEditorSyncReceiver] HandleUpdateComponent called, args.Length={args.Length}");
+            if (args.Length < 1)
+            {
+                Debug.LogWarning("[RemoteEditorSyncReceiver] HandleUpdateComponent: No args");
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Deserializing ComponentData from: {args[0].Substring(0, System.Math.Min(100, args[0].Length))}...");
+            var data = JsonConvert.DeserializeObject<ComponentData>(args[0], _jsonSettings);
+            if (data == null)
+            {
+                Debug.LogWarning("[RemoteEditorSyncReceiver] HandleUpdateComponent: Failed to deserialize ComponentData");
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Looking for GameObject: {data.SceneName}/{data.Path}");
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Found GameObject: {go.name}, getting component type: {data.ComponentType}");
+
+            // ComponentTypeからTypeを取得
+            var componentType = System.Type.GetType(data.ComponentType);
+            if (componentType == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Component type resolved: {componentType.Name}");
+
+            // Componentを取得
+            var component = go.GetComponent(componentType);
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found on GameObject: {componentType.Name}");
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Found component, applying data. Data length: {data.SerializedData.Length}");
+
+            try
+            {
+                JsonUtility.FromJsonOverwrite(data.SerializedData, component);
+                
+                // ランタイムでの確実な反映のために特定のコンポーネントタイプを個別処理
+                ForceComponentUpdate(component);
+                
+                Debug.Log($"[RemoteEditorSyncReceiver] Updated Component: {componentType.Name} on {data.SceneName}/{data.Path}");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[RemoteEditorSyncReceiver] Failed to apply serialized data to component '{componentType.Name}': {e.Message}\nStack: {e.StackTrace}");
+            }
+        }
+
+        private void ForceComponentUpdate(Component component)
+        {
+            // 特定のコンポーネントタイプに対して、ランタイムでの確実な更新を行う
+            switch (component)
+            {
+                case Renderer renderer:
+                    // Rendererの場合、強制的に更新をトリガー
+                    renderer.enabled = renderer.enabled;
+                    break;
+                    
+                case Collider collider:
+                    // Colliderの場合、物理演算に反映させる
+                    collider.enabled = collider.enabled;
+                    break;
+                    
+                case MonoBehaviour monoBehaviour:
+                    // MonoBehaviourの場合、enable/disableで更新をトリガー
+                    bool wasEnabled = monoBehaviour.enabled;
+                    monoBehaviour.enabled = false;
+                    monoBehaviour.enabled = wasEnabled;
+                    break;
+                    
+                default:
+                    // その他のコンポーネントは特別な処理なし
+                    break;
+            }
+        }
+
         private GameObject FindGameObjectByPath(string sceneName, string path)
         {
             string cacheKey = $"{sceneName}:{path}";
@@ -360,6 +480,23 @@ namespace RemoteEditorSync
             public Vector3 Position;
             public Vector3 Rotation;
             public Vector3 Scale;
+        }
+
+        [System.Serializable]
+        private class GameObjectData
+        {
+            public string SceneName;
+            public string Path;
+            public string SerializedData;
+        }
+
+        [System.Serializable]
+        private class ComponentData
+        {
+            public string SceneName;
+            public string Path;
+            public string ComponentType;
+            public string SerializedData;
         }
     }
 }
