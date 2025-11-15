@@ -2,7 +2,8 @@
     "name": "RemoteEditorSync.Runtime",
     "rootNamespace": "RemoteEditorSync",
     "references": [
-        "GUID:71f73dfa490a5b84b9b17b2b59b31cec"
+        "GUID:71f73dfa490a5b84b9b17b2b59b31cec",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

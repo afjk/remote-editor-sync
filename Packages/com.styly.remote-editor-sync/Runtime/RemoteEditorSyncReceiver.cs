@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using System.Collections.Generic;
 using Styly.NetSync;
 using Newtonsoft.Json;
@@ -336,6 +337,38 @@ namespace RemoteEditorSync
             // 特定のコンポーネントタイプに対して、ランタイムでの確実な更新を行う
             switch (component)
             {
+                case Slider slider:
+                    // valueプロパティに再代入することでSetterを呼び、UpdateVisualsをトリガー
+                    float sliderValue = slider.value;
+                    slider.value = sliderValue;
+                    break;
+
+                case Scrollbar scrollbar:
+                    // valueプロパティに再代入することでSetterを呼び、UpdateVisualsをトリガー
+                    float scrollbarValue = scrollbar.value;
+                    scrollbar.value = scrollbarValue;
+                    break;
+
+                case Toggle toggle:
+                    toggle.SetIsOnWithoutNotify(toggle.isOn);
+                    toggle.Rebuild(CanvasUpdate.Layout);
+                    toggle.Rebuild(CanvasUpdate.PreRender);
+                    break;
+
+                case InputField inputField:
+                    inputField.SetTextWithoutNotify(inputField.text);
+                    inputField.ForceLabelUpdate();
+                    break;
+
+                case Dropdown dropdown:
+                    dropdown.SetValueWithoutNotify(dropdown.value);
+                    dropdown.RefreshShownValue();
+                    break;
+
+                case Graphic graphic:
+                    graphic.SetAllDirty();
+                    break;
+
                 case Renderer renderer:
                     // Rendererの場合、強制的に更新をトリガー
                     renderer.enabled = renderer.enabled;
