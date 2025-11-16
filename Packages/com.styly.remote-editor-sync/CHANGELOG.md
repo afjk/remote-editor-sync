@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2025-11-16
+
+### Added
+- **Material Property Synchronization**: Major new feature for syncing material shader properties
+  - `MaterialAnchor.cs`: Component that provides stable identity for renderer-bound materials across hierarchy changes
+  - `MaterialSignature.cs`: Unique identification system for materials using asset GUID or anchor-based runtime IDs
+  - `MaterialAnchorRegistry.cs`: Runtime registry for managing material instances and their mappings
+  - `MaterialAnchorRuntimeBootstrap.cs`: Automatic initialization of material registry at runtime
+  - `MaterialTracker.cs`: Editor-side tracking system for monitoring material property changes
+  - `MaterialSnapshot.cs`: Snapshot-based change detection for material properties
+  - Automatic detection and synchronization of material property changes in Inspector
+  - Supported shader property types:
+    - Color properties
+    - Float and Range properties
+    - Vector properties
+  - Material registration with unique anchors for reliable sync across hierarchy changes
+  - Bidirectional confirmation system (RegisterMaterial/RegisterMaterialResult RPCs)
+  - Automatic cleanup of deleted materials
+  - Support for both asset-based materials (via GUID) and runtime materials (via anchor ID)
+
+### Changed
+- Enhanced RPC system with material-specific handlers:
+  - `RegisterMaterial`: Notifies clients about new materials to track
+  - `UnregisterMaterial`: Cleanup for removed materials
+  - `UpdateMaterialProperties`: Syncs material property changes
+  - `RegisterMaterialResult`: Confirmation from client to editor
+- Automatic material registration for newly created GameObjects
+- Material tracking integrated with existing GameObject change detection
+
+### Documentation
+- Updated README with Material Synchronization section
+- Added documentation for MaterialAnchor system
+- Updated feature list with material sync capabilities
+
 ## [1.2.4] - 2025-11-15
 
 ### Added
