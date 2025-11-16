@@ -8,6 +8,7 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 
 - 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, activation, and Transform changes
 - 🧩 **Component Property Sync**: Automatically sync component properties (Behaviour, Renderer, Collider, and more)
+- 🎨 **Material Property Sync**: Sync material shader properties (Color, Float, Vector) in real-time
 - 🎮 **Primitive Support**: Automatically detects and syncs Sphere, Cube, Capsule, Cylinder, Plane, Quad
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
 - 🏷️ **Tag Filtering**: Optionally sync only specific GameObjects by tag
@@ -25,6 +26,7 @@ Perfect for XR development and remote debugging - edit in the Unity Editor and s
 | **SetActive** | Toggles GameObject active state |
 | **Transform** | Position, Rotation, Scale changes |
 | **Component Properties** | Syncs component property changes (Behaviour, Renderer, Collider, etc.) |
+| **Material Properties** | Syncs material shader properties (Color, Float, Range, Vector) |
 
 ## Requirements
 
@@ -119,6 +121,51 @@ The following component types are automatically synchronized:
 2. Change Light intensity from 1.0 to 2.0 in Inspector
 3. → All clients see the brighter light instantly!
 ```
+
+## Material Property Synchronization
+
+The system automatically synchronizes material shader properties when you edit them in the Inspector during Play Mode.
+
+### How It Works
+
+1. **Material Registration**: When a GameObject with a Renderer is created or enters Play Mode, its materials are automatically registered
+2. **Change Detection**: The system monitors material property changes using snapshots
+3. **Unique Identification**: Each material is identified using:
+   - **Asset GUID** for materials saved as assets
+   - **MaterialAnchor ID** for runtime materials (provides stable identity even when hierarchy changes)
+4. **Property Sync**: Changes are sent to clients via RPC and applied to the corresponding materials
+
+### Supported Property Types
+
+- **Color**: Color picker values (e.g., `_Color`, `_EmissionColor`)
+- **Float**: Numeric values (e.g., `_Metallic`, `_Glossiness`)
+- **Range**: Slider values (e.g., `_Smoothness`)
+- **Vector**: Vector4 values (e.g., `_MainTex_ST`)
+
+### MaterialAnchor System
+
+The `MaterialAnchor` component is automatically added to GameObjects with Renderers to provide stable material identification:
+
+- **Automatic Creation**: Added automatically when materials are registered
+- **Persistent ID**: Uses GUID to track materials across hierarchy changes
+- **Reliable Sync**: Ensures materials are correctly identified even if GameObject is renamed or moved
+
+### Example
+
+```
+1. Enter Play Mode
+2. Select a GameObject with a Renderer (e.g., a Cube with Standard Shader)
+3. In Inspector, change the material's Albedo color
+4. → All clients instantly see the new color!
+5. Adjust Metallic or Smoothness sliders
+6. → Changes sync in real-time across all devices!
+```
+
+### Limitations
+
+- **Texture References**: Texture properties are not yet synchronized (only Colors, Floats, and Vectors)
+- **Shader Changes**: Changing the shader itself is not synchronized, only property values
+- **Performance**: Frequent material changes may be throttled by RPC rate limits
 
 ## Important: Runtime vs Editor Changes
 
@@ -311,13 +358,41 @@ Packages/com.styly.remote-editor-sync/
 │   ├── RemoteEditorSyncSetup.cs         # Setup utilities & menu commands
 │   ├── PlayModeChangeLog.cs             # Play mode change recording system
 │   ├── PlayModeChangesWindow.cs         # EditorWindow for applying changes
+│   ├── MaterialTracker.cs               # Material change detection & tracking
+│   ├── MaterialSnapshot.cs              # Material property snapshot system
+│   ├── ComponentUpdateTester.cs         # Component update testing utilities
+│   ├── QuickComponentTest.cs            # Quick component testing tools
 │   └── RemoteEditorSync.Editor.asmdef   # Assembly definition
 └── Runtime/
     ├── RemoteEditorSyncReceiver.cs      # RPC receiving & applying
+    ├── MaterialAnchor.cs                # Stable material identity component
+    ├── MaterialSignature.cs             # Material identification system
+    ├── MaterialAnchorRegistry.cs        # Runtime material registry
+    ├── MaterialAnchorRuntimeBootstrap.cs # Material registry initialization
+    ├── ComponentSyncHandlers.cs         # Component property sync handlers
+    ├── ComponentSyncTypes.cs            # Component sync type definitions
+    ├── SerializableUnityValues.cs       # Serialization for Unity types
     └── RemoteEditorSync.Runtime.asmdef  # Assembly definition
 ```
 
 ## Version History
+
+### v1.2.5 (2025-11-16)
+- ✨ **NEW**: Material Property Synchronization
+  - Sync material shader properties (Color, Float, Range, Vector) in real-time
+  - MaterialAnchor system for stable material identity across hierarchy changes
+  - Automatic material registration and tracking
+  - Bidirectional confirmation (RegisterMaterial/RegisterMaterialResult)
+  - Support for both asset-based and runtime materials
+  - Automatic cleanup of deleted materials
+- 🔧 Enhanced RPC system with material-specific handlers
+- 📝 Updated documentation with Material Synchronization details
+
+### v1.2.4 (2025-11-15)
+- ✨ **NEW**: Component Property Synchronization
+  - Sync component properties (Behaviour, Renderer, Collider, etc.)
+  - Support for primitives, strings, enums, Unity types
+  - Reflection-based handler for generic components
 
 ### v1.2.0 (2025-11-11)
 - ✨ **NEW**: Play Mode Changes Preservation feature
