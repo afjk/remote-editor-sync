@@ -1,10 +1,11 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using Newtonsoft.Json;
+using Styly.NetSync;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using System.Collections.Generic;
-using System.Reflection;
-using Styly.NetSync;
-using Newtonsoft.Json;
 
 namespace RemoteEditorSync
 {
@@ -103,6 +104,18 @@ namespace RemoteEditorSync
 
                     case "RemoveComponent":
                         HandleRemoveComponent(args);
+                        break;
+
+                    case "RegisterMaterial":
+                        HandleRegisterMaterial(args);
+                        break;
+
+                    case "UnregisterMaterial":
+                        HandleUnregisterMaterial(args);
+                        break;
+
+                    case "UpdateMaterialProperties":
+                        HandleUpdateMaterialProperties(args);
                         break;
                 }
             }
@@ -498,6 +511,132 @@ namespace RemoteEditorSync
             Debug.Log($"[RemoteEditorSyncReceiver] Removed component: {data.Signature.TypeName} from {data.SceneName}/{data.Path}");
         }
 
+        private void HandleRegisterMaterial(string[] args)
+        {
+            if (args.Length < 1)
+                return;
+
+            var data = JsonConvert.DeserializeObject<RegisterMaterialData>(args[0], _jsonSettings);
+            if (data == null)
+                return;
+
+            if (MaterialAnchorRegistry.Instance == null)
+            {
+                Debug.LogWarning("[RemoteEditorSyncReceiver] MaterialAnchorRegistry is missing from the scene.");
+                SendRegisterMaterialResult(data.Signature.RuntimeMaterialId, false, "MaterialAnchorRegistry missing");
+                return;
+            }
+
+            bool success = MaterialAnchorRegistry.Instance.RegisterMaterialDynamic(data.Signature, out var errorMessage);
+            if (success)
+            {
+                Debug.Log($"[RemoteEditorSyncReceiver] Registered Material: {data.Signature.RuntimeMaterialId}");
+            }
+            else
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to register material {data.Signature.RuntimeMaterialId}: {errorMessage}");
+            }
+
+            SendRegisterMaterialResult(data.Signature.RuntimeMaterialId, success, errorMessage);
+        }
+
+        private void HandleUnregisterMaterial(string[] args)
+        {
+            if (args.Length < 1)
+                return;
+
+            var data = JsonConvert.DeserializeObject<UnregisterMaterialData>(args[0], _jsonSettings);
+            if (data == null)
+                return;
+
+            if (MaterialAnchorRegistry.Instance == null)
+            {
+                Debug.LogWarning("[RemoteEditorSyncReceiver] MaterialAnchorRegistry is missing from the scene.");
+                return;
+            }
+
+            MaterialAnchorRegistry.Instance.UnregisterMaterialDynamic(data.RuntimeMaterialId);
+            Debug.Log($"[RemoteEditorSyncReceiver] Unregistered Material: {data.RuntimeMaterialId}");
+        }
+
+        private void HandleUpdateMaterialProperties(string[] args)
+        {
+            if (args.Length < 1)
+                return;
+
+            var data = JsonConvert.DeserializeObject<UpdateMaterialPropertiesData>(args[0], _jsonSettings);
+            if (data == null)
+                return;
+
+            if (MaterialAnchorRegistry.Instance == null)
+            {
+                Debug.LogWarning("[RemoteEditorSyncReceiver] MaterialAnchorRegistry is missing from the scene.");
+                return;
+            }
+
+            var materials = MaterialAnchorRegistry.Instance.FindMaterials(data.Signature);
+            if (materials == null || materials.Count == 0)
+            {
+                Debug.LogError($"[RemoteEditorSyncReceiver] Material not found for id {data.Signature.RuntimeMaterialId}");
+                return;
+            }
+
+            var properties = JsonConvert.DeserializeObject<Dictionary<string, MaterialPropertyValue>>(data.PropertiesJson, _jsonSettings);
+            if (properties == null)
+            {
+                return;
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Applying material update for {data.Signature.RuntimeMaterialId} (shader {data.Signature.ShaderName})");
+
+            foreach (var material in materials)
+            {
+                foreach (var kvp in properties)
+                {
+                    if (!material.HasProperty(kvp.Key))
+                    {
+                        Debug.Log($"[RemoteEditorSyncReceiver] Material {material.name} missing property {kvp.Key}, skipping.");
+                        continue;
+                    }
+
+                    try
+                    {
+                        switch (kvp.Value.Type)
+                        {
+                            case MaterialPropertyType.Color:
+                                material.SetColor(kvp.Key, kvp.Value.ColorValue.ToColor());
+                                break;
+                            case MaterialPropertyType.Float:
+                                material.SetFloat(kvp.Key, kvp.Value.FloatValue);
+                                break;
+                            case MaterialPropertyType.Vector:
+                                material.SetVector(kvp.Key, kvp.Value.VectorValue.ToVector4());
+                                break;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to set material property {kvp.Key} on {material.name}: {e.Message}");
+                    }
+                }
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Updated Material Properties: {data.Signature.RuntimeMaterialId} ({materials.Count} material(s))");
+        }
+
+        private void SendRegisterMaterialResult(string runtimeMaterialId, bool success, string errorMessage)
+        {
+            var data = new RegisterMaterialResultData
+            {
+                RuntimeMaterialId = runtimeMaterialId,
+                Success = success,
+                ErrorMessage = errorMessage
+            };
+
+            var json = JsonConvert.SerializeObject(data, _jsonSettings);
+            SendRPC("RegisterMaterialResult", new[] { json });
+        }
+
         private void ForceComponentUpdate(Component component)
         {
             // 特定のコンポーネントタイプに対して、ランタイムでの確実な更新を行う
@@ -826,6 +965,16 @@ namespace RemoteEditorSync
             {
                 CacheGameObjectRecursive(sceneName, child.gameObject);
             }
+        }
+
+        private void SendRPC(string functionName, string[] args)
+        {
+            if (NetSyncManager.Instance == null)
+            {
+                return;
+            }
+
+            NetSyncManager.Instance.Rpc(functionName, args);
         }
 
         private string GetGameObjectPath(GameObject go)

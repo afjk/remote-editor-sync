@@ -46,6 +46,11 @@ namespace RemoteEditorSync
             z = value.z;
             w = value.w;
         }
+
+        public Vector4 ToVector4()
+        {
+            return new Vector4(x, y, z, w);
+        }
     }
 
     [Serializable]
@@ -107,6 +112,11 @@ namespace RemoteEditorSync
             g = value.g;
             b = value.b;
             a = value.a;
+        }
+
+        public Color ToColor()
+        {
+            return new Color(r, g, b, a);
         }
     }
 
