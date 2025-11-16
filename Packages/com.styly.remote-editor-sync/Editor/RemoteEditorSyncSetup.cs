@@ -1,3 +1,4 @@
+using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -14,34 +15,38 @@ namespace RemoteEditorSync
         {
             // RemoteEditorSyncReceiverが既に存在するか確認
             var existingReceiver = Object.FindObjectOfType<RemoteEditorSyncReceiver>();
+            GameObject receiverObj;
             if (existingReceiver != null)
             {
-                Debug.LogWarning("[RemoteEditorSyncSetup] RemoteEditorSyncReceiver already exists in the scene.");
-                Selection.activeGameObject = existingReceiver.gameObject;
-                EditorGUIUtility.PingObject(existingReceiver.gameObject);
-                return;
+                Debug.Log("[RemoteEditorSyncSetup] RemoteEditorSyncReceiver already exists. Reusing existing object.");
+                receiverObj = existingReceiver.gameObject;
             }
-
-            // NetSyncManagerを探す
-            var netSyncManager = Object.FindObjectOfType<Styly.NetSync.NetSyncManager>();
-            if (netSyncManager == null)
+            else
             {
-                EditorUtility.DisplayDialog(
-                    "NetSyncManager Not Found",
-                    "NetSyncManager is not found in the scene.\n\nPlease add NetSyncManager to your scene first before setting up Remote Editor Sync.",
-                    "OK"
-                );
-                Debug.LogError("[RemoteEditorSyncSetup] NetSyncManager not found in the scene. Please add NetSyncManager first.");
-                return;
+                // NetSyncManagerを探す
+                var netSyncManager = Object.FindObjectOfType<Styly.NetSync.NetSyncManager>();
+                if (netSyncManager == null)
+                {
+                    EditorUtility.DisplayDialog(
+                        "NetSyncManager Not Found",
+                        "NetSyncManager is not found in the scene.\n\nPlease add NetSyncManager to your scene first before setting up Remote Editor Sync.",
+                        "OK"
+                    );
+                    Debug.LogError("[RemoteEditorSyncSetup] NetSyncManager not found in the scene. Please add NetSyncManager first.");
+                    return;
+                }
+
+                // RemoteEditorSyncReceiverを追加
+                receiverObj = new GameObject("RemoteEditorSyncReceiver");
+                receiverObj.AddComponent<RemoteEditorSyncReceiver>();
+
+                // NetSyncManagerの近くに配置
+                receiverObj.transform.SetParent(netSyncManager.transform.parent);
+                receiverObj.transform.SetSiblingIndex(netSyncManager.transform.GetSiblingIndex() + 1);
             }
 
-            // RemoteEditorSyncReceiverを追加
-            var receiverObj = new GameObject("RemoteEditorSyncReceiver");
-            receiverObj.AddComponent<RemoteEditorSyncReceiver>();
-
-            // NetSyncManagerの近くに配置
-            receiverObj.transform.SetParent(netSyncManager.transform.parent);
-            receiverObj.transform.SetSiblingIndex(netSyncManager.transform.GetSiblingIndex() + 1);
+            EnsureMaterialAnchorSystem();
+            EnsureAnchorsForActiveScene();
 
             // シーンを保存
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
@@ -125,6 +130,70 @@ namespace RemoteEditorSync
             else
             {
                 Debug.LogWarning($"[RemoteEditorSyncSetup] README not found at {readmePath}");
+            }
+        }
+
+        private static void EnsureMaterialAnchorSystem()
+        {
+            var existingRegistry = Object.FindObjectOfType<MaterialAnchorRegistry>();
+            if (existingRegistry != null)
+            {
+                if (existingRegistry.GetComponent<MaterialAnchorRuntimeBootstrap>() == null)
+                {
+                    existingRegistry.gameObject.AddComponent<MaterialAnchorRuntimeBootstrap>();
+                    Debug.Log("[RemoteEditorSyncSetup] Added MaterialAnchorRuntimeBootstrap to existing registry.");
+                }
+                EditorUtility.SetDirty(existingRegistry.gameObject);
+                return;
+            }
+
+            var registryObj = new GameObject("MaterialAnchorSystem");
+            registryObj.AddComponent<MaterialAnchorRegistry>();
+            registryObj.AddComponent<MaterialAnchorRuntimeBootstrap>();
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Selection.activeGameObject = registryObj;
+            EditorGUIUtility.PingObject(registryObj);
+
+            Debug.Log("[RemoteEditorSyncSetup] Added MaterialAnchorRegistry + MaterialAnchorRuntimeBootstrap to the scene.");
+        }
+
+        private static void EnsureAnchorsForActiveScene()
+        {
+            var scene = EditorSceneManager.GetActiveScene();
+            if (!scene.IsValid() || !scene.isLoaded)
+            {
+                Debug.LogWarning("[RemoteEditorSyncSetup] Active scene is not valid or not loaded. MaterialAnchor scan skipped.");
+                return;
+            }
+
+            var renderers = Object.FindObjectsOfType<Renderer>(true)
+                .Where(renderer => renderer != null && renderer.gameObject.scene == scene)
+                .ToArray();
+
+            Debug.Log($"[RemoteEditorSyncSetup] Begin MaterialAnchor scan. Scene: {scene.name}, Renderers found: {renderers.Length}");
+
+            int addedCount = 0;
+            foreach (var renderer in renderers)
+            {
+                var anchors = renderer.GetComponents<MaterialAnchor>();
+                if (anchors.Any(anchor => anchor != null && anchor.TargetRenderer == renderer))
+                {
+                    continue;
+                }
+
+                Debug.Log($"[RemoteEditorSyncSetup] Adding MaterialAnchor to '{renderer.gameObject.name}' ({renderer.GetType().Name})");
+                Undo.RecordObject(renderer.gameObject, "Add MaterialAnchor");
+                var anchor = MaterialAnchor.GetOrCreateForRenderer(renderer);
+                EditorUtility.SetDirty(anchor);
+                EditorUtility.SetDirty(renderer.gameObject);
+                addedCount++;
+            }
+
+            Debug.Log($"[RemoteEditorSyncSetup] Scanned {renderers.Length} renderer(s); added {addedCount} MaterialAnchor component(s).");
+
+            if (addedCount > 0)
+            {
+                EditorSceneManager.MarkSceneDirty(scene);
             }
         }
     }

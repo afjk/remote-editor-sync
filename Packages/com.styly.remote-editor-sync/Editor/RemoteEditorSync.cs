@@ -1,8 +1,11 @@
-using UnityEngine;
-using UnityEditor;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
+using Styly.NetSync;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace RemoteEditorSync
 {
@@ -14,6 +17,10 @@ namespace RemoteEditorSync
     {
         private static Dictionary<int, ObjectState> _trackedObjects = new Dictionary<int, ObjectState>();
         private static bool _isEnabled = false;
+
+        private static readonly Dictionary<string, Action<string[]>> _rpcHandlers =
+            new Dictionary<string, Action<string[]>>();
+        private static NetSyncManager _rpcListenerSource;
 
         // 自動同期のOn/Off設定（EditorPrefsで永続化）
         private const string AutoSyncEnabledKey = "RemoteEditorSync.AutoSyncEnabled";
@@ -47,6 +54,7 @@ namespace RemoteEditorSync
             _autoSyncEnabled = EditorPrefs.GetBool(AutoSyncEnabledKey, true);
 
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            RegisterRpcHandlers();
         }
 
         [MenuItem("Tools/Remote Editor Sync/Settings/Toggle Sync Only Editor Changes")]
@@ -91,6 +99,11 @@ namespace RemoteEditorSync
 
         private static void Enable()
         {
+            if (_isEnabled)
+            {
+                return;
+            }
+
             _isEnabled = true;
             _trackedObjects.Clear();
 
@@ -105,17 +118,32 @@ namespace RemoteEditorSync
             // これもエディタ操作のみを検知します
             ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
 
+            MaterialTracker.Clear();
+            EnsureAllRenderersHaveAnchors();
+            RegisterAllSceneMaterials();
+            EditorApplication.update -= OnEditorUpdate;
+            EditorApplication.update += OnEditorUpdate;
+            EnsureRpcListener();
+
             Debug.Log("[RemoteEditorSync] Enabled (Editor changes only)");
         }
 
         private static void Disable()
         {
+            if (!_isEnabled)
+            {
+                return;
+            }
+
             _isEnabled = false;
 
             Undo.postprocessModifications -= OnPropertyModification;
             ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
+            EditorApplication.update -= OnEditorUpdate;
+            DetachRpcListener();
 
             _trackedObjects.Clear();
+            MaterialTracker.Clear();
 
             Debug.Log("[RemoteEditorSync] Disabled");
 
@@ -128,6 +156,98 @@ namespace RemoteEditorSync
                     PlayModeChangesWindow.ShowWindow();
                 };
             }
+        }
+
+        private static void RegisterRpcHandlers()
+        {
+            _rpcHandlers["RegisterMaterialResult"] = HandleRegisterMaterialResult;
+        }
+
+        private static void EnsureRpcListener()
+        {
+            var manager = NetSyncManager.Instance;
+            if (manager == null)
+            {
+                DetachRpcListener();
+                return;
+            }
+
+            if (_rpcListenerSource == manager)
+            {
+                return;
+            }
+
+            DetachRpcListener();
+            manager.OnRPCReceived.AddListener(OnNetSyncRpcReceived);
+            _rpcListenerSource = manager;
+        }
+
+        private static void DetachRpcListener()
+        {
+            if (_rpcListenerSource != null)
+            {
+                _rpcListenerSource.OnRPCReceived.RemoveListener(OnNetSyncRpcReceived);
+                _rpcListenerSource = null;
+            }
+        }
+
+        private static void OnNetSyncRpcReceived(int senderClientNo, string functionName, string[] args)
+        {
+            if (!_isEnabled)
+            {
+                return;
+            }
+
+            var manager = NetSyncManager.Instance;
+            if (manager != null && senderClientNo == manager.ClientNo)
+            {
+                return;
+            }
+
+            if (_rpcHandlers.TryGetValue(functionName, out var handler))
+            {
+                handler?.Invoke(args);
+            }
+        }
+
+        private static void OnEditorUpdate()
+        {
+            if (!_isEnabled || !Application.isPlaying)
+            {
+                return;
+            }
+
+            EnsureRpcListener();
+
+            var manager = NetSyncManager.Instance;
+            if (manager == null || manager.ClientNo < 0)
+            {
+                return;
+            }
+
+            MaterialTracker.CheckForChanges();
+            MaterialTracker.RetryPendingRegistrations();
+
+            if (Time.frameCount % 300 == 0)
+            {
+                MaterialTracker.CleanupDeletedMaterials();
+            }
+        }
+
+        private static void HandleRegisterMaterialResult(string[] args)
+        {
+            if (args == null || args.Length < 1)
+            {
+                return;
+            }
+
+            var data = JsonConvert.DeserializeObject<RegisterMaterialResultData>(args[0], _jsonSettings);
+            if (data == null)
+            {
+                return;
+            }
+
+            MaterialTracker.HandleRegisterMaterialResult(data);
         }
 
         private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
@@ -153,6 +273,8 @@ namespace RemoteEditorSync
                                 Debug.Log($"[RemoteEditorSync] Creating and syncing: {createdGo.name}");
                                 CreateObjectState(createdGo);
                                 SendCreateGameObject(createdGo);
+                                EnsureAnchorsForHierarchy(createdGo);
+                                RegisterMaterialsRecursive(createdGo);
                             }
                             else
                             {
@@ -175,6 +297,7 @@ namespace RemoteEditorSync
                             PlayModeChangeLog.Instance.RecordDeleteGameObject(trackedEntry.Value.SceneName, trackedEntry.Value.Path);
                             _trackedObjects.Remove(trackedEntry.Key);
                         }
+                        MaterialTracker.UnregisterGameObject(destroyEvent.instanceId);
                         break;
 
                     case ObjectChangeKind.ChangeGameObjectParent:
@@ -209,6 +332,11 @@ namespace RemoteEditorSync
                         stream.GetChangeGameObjectStructureEvent(i, out var structureEvent);
                         var structureGo = EditorUtility.InstanceIDToObject(structureEvent.instanceId) as GameObject;
                         Debug.Log($"[RemoteEditorSync] ChangeGameObjectStructure detected: {structureGo?.name ?? "null"}");
+
+                        if (structureGo != null)
+                        {
+                            EnsureAnchorsForHierarchy(structureGo);
+                        }
 
                         if (structureGo != null && ShouldSync(structureGo))
                         {
@@ -305,6 +433,8 @@ namespace RemoteEditorSync
                         break;
                 }
             }
+
+            UpdateMaterialRegistration(go);
         }
 
         private static void SyncComponentIfChanged(Component component)
@@ -347,6 +477,101 @@ namespace RemoteEditorSync
                 SendUpdateComponentProperties(component);
                 state.ComponentSnapshots[signature] = new ComponentSnapshot(component, handler);
             }
+        }
+
+        private static void EnsureAllRenderersHaveAnchors()
+        {
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded)
+                {
+                    continue;
+                }
+
+                foreach (var root in scene.GetRootGameObjects())
+                {
+                    EnsureAnchorsForHierarchy(root);
+                }
+            }
+        }
+
+        private static void EnsureAnchorsForHierarchy(GameObject root)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            var renderers = root.GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                MaterialAnchor.GetOrCreateForRenderer(renderer);
+            }
+        }
+
+        private static void RegisterAllSceneMaterials()
+        {
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded)
+                {
+                    continue;
+                }
+
+                foreach (var root in scene.GetRootGameObjects())
+                {
+                    RegisterMaterialsRecursive(root);
+                }
+            }
+        }
+
+        private static void RegisterMaterialsRecursive(GameObject go)
+        {
+            if (go == null)
+            {
+                return;
+            }
+
+            var renderers = go.GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                if (!ShouldSync(renderer.gameObject))
+                {
+                    continue;
+                }
+
+                var materials = renderer.sharedMaterials;
+                for (int i = 0; i < materials.Length; i++)
+                {
+                    if (materials[i] != null)
+                    {
+                        MaterialTracker.RegisterMaterial(materials[i], renderer, i, renderer.gameObject);
+                    }
+                }
+            }
+        }
+
+        private static void UpdateMaterialRegistration(GameObject go)
+        {
+            if (go == null || !ShouldSync(go))
+            {
+                return;
+            }
+
+            MaterialTracker.UnregisterAllMaterials(go);
+            RegisterMaterialsRecursive(go);
         }
 
         private static void CreateObjectState(GameObject go)
