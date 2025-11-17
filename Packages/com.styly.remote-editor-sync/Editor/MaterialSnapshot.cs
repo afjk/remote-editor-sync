@@ -10,10 +10,12 @@ namespace RemoteEditorSync
     public class MaterialSnapshot
     {
         public Dictionary<string, MaterialPropertyValue> Properties { get; }
+        private readonly float _precision;
 
-        public MaterialSnapshot(Material material)
+        public MaterialSnapshot(Material material, float precision)
         {
-            Properties = ExtractProperties(material);
+            _precision = Mathf.Max(0.0001f, precision);
+            Properties = ExtractProperties(material, _precision);
         }
 
         public bool HasChanged(Material material)
@@ -23,11 +25,46 @@ namespace RemoteEditorSync
                 return false;
             }
 
-            var current = ExtractProperties(material);
+            var current = ExtractProperties(material, _precision);
             return !PropertiesEqual(Properties, current);
         }
 
-        private static Dictionary<string, MaterialPropertyValue> ExtractProperties(Material material)
+        public Dictionary<string, MaterialPropertyValue> CalculateDelta(Material material)
+        {
+            var current = ExtractProperties(material, _precision);
+            return CalculateDelta(Properties, current);
+        }
+
+        public static Dictionary<string, MaterialPropertyValue> CalculateDelta(
+            Dictionary<string, MaterialPropertyValue> previous,
+            Dictionary<string, MaterialPropertyValue> current)
+        {
+            var delta = new Dictionary<string, MaterialPropertyValue>();
+            if (previous == null)
+            {
+                return delta;
+            }
+
+            foreach (var kvp in current)
+            {
+                if (!previous.TryGetValue(kvp.Key, out var oldValue) || !Equals(oldValue, kvp.Value))
+                {
+                    delta[kvp.Key] = kvp.Value;
+                }
+            }
+
+            foreach (var kvp in previous)
+            {
+                if (!current.ContainsKey(kvp.Key))
+                {
+                    delta[kvp.Key] = null;
+                }
+            }
+
+            return delta;
+        }
+
+        private static Dictionary<string, MaterialPropertyValue> ExtractProperties(Material material, float precision)
         {
             var result = new Dictionary<string, MaterialPropertyValue>();
 
@@ -52,10 +89,17 @@ namespace RemoteEditorSync
                     switch (propertyType)
                     {
                         case ShaderUtil.ShaderPropertyType.Color:
+                            var color = material.GetColor(propertyName);
                             result[propertyName] = new MaterialPropertyValue
                             {
                                 Type = MaterialPropertyType.Color,
-                                ColorValue = new SerializableColor(material.GetColor(propertyName))
+                                ColorValue = new SerializableColor
+                                {
+                                    r = Quantize(color.r, precision),
+                                    g = Quantize(color.g, precision),
+                                    b = Quantize(color.b, precision),
+                                    a = Quantize(color.a, precision)
+                                }
                             };
                             break;
 
@@ -64,7 +108,7 @@ namespace RemoteEditorSync
                             result[propertyName] = new MaterialPropertyValue
                             {
                                 Type = MaterialPropertyType.Float,
-                                FloatValue = material.GetFloat(propertyName)
+                                FloatValue = Quantize(material.GetFloat(propertyName), precision)
                             };
                             break;
 
@@ -72,7 +116,7 @@ namespace RemoteEditorSync
                             result[propertyName] = new MaterialPropertyValue
                             {
                                 Type = MaterialPropertyType.Vector,
-                                VectorValue = new SerializableVector4(material.GetVector(propertyName))
+                                VectorValue = new SerializableVector4(QuantizeVector(material.GetVector(propertyName), precision))
                             };
                             break;
                     }
@@ -84,6 +128,25 @@ namespace RemoteEditorSync
             }
 
             return result;
+        }
+
+        private static float Quantize(float value, float precision)
+        {
+            if (precision <= 0f)
+            {
+                return value;
+            }
+
+            return Mathf.Round(value / precision) * precision;
+        }
+
+        private static Vector4 QuantizeVector(Vector4 value, float precision)
+        {
+            return new Vector4(
+                Quantize(value.x, precision),
+                Quantize(value.y, precision),
+                Quantize(value.z, precision),
+                Quantize(value.w, precision));
         }
 
         private static bool PropertiesEqual(

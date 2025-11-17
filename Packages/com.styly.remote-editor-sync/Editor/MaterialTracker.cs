@@ -42,7 +42,7 @@ namespace RemoteEditorSync
             {
                 SendRegisterMaterial(material, signature);
                 _pendingRuntimeRegistrations.Add(signature.RuntimeMaterialId);
-                _materialSnapshots[signature.RuntimeMaterialId] = new MaterialSnapshot(material);
+                _materialSnapshots[signature.RuntimeMaterialId] = CreateSnapshot(material);
             }
 
             if (!_materialUsers.TryGetValue(signature.RuntimeMaterialId, out var users))
@@ -154,19 +154,29 @@ namespace RemoteEditorSync
                     continue;
                 }
 
-                bool materialChanged = kvp.Value.Any(signature =>
-                    _materialSnapshots.TryGetValue(signature.RuntimeMaterialId, out var snapshot) &&
-                    snapshot.HasChanged(material));
-
-                if (!materialChanged)
-                {
-                    continue;
-                }
-
                 foreach (var signature in kvp.Value)
                 {
-                    SendUpdateMaterialProperties(material, signature);
-                    _materialSnapshots[signature.RuntimeMaterialId] = new MaterialSnapshot(material);
+                    if (_pendingRuntimeRegistrations.Contains(signature.RuntimeMaterialId))
+                    {
+                        continue;
+                    }
+
+                    if (!_materialSnapshots.TryGetValue(signature.RuntimeMaterialId, out var snapshot))
+                    {
+                        var freshSnapshot = CreateSnapshot(material);
+                        SendUpdateMaterialProperties(signature, freshSnapshot.Properties, isDelta: false);
+                        _materialSnapshots[signature.RuntimeMaterialId] = freshSnapshot;
+                        continue;
+                    }
+
+                    var delta = snapshot.CalculateDelta(material);
+                    if (delta == null || delta.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    SendUpdateMaterialProperties(signature, delta, isDelta: true);
+                    _materialSnapshots[signature.RuntimeMaterialId] = CreateSnapshot(material);
                 }
             }
         }
@@ -189,13 +199,7 @@ namespace RemoteEditorSync
                 {
                     foreach (var signature in signatures)
                     {
-                        RemoveRuntimeIdFromAllGameObjects(signature.RuntimeMaterialId);
-                        _materialUsers.Remove(signature.RuntimeMaterialId);
-                        _runtimeIdToSignature.Remove(signature.RuntimeMaterialId);
-                        _runtimeIdToInstanceId.Remove(signature.RuntimeMaterialId);
-                        _materialSnapshots.Remove(signature.RuntimeMaterialId);
-                        _pendingRuntimeRegistrations.Remove(signature.RuntimeMaterialId);
-                        SendUnregisterMaterial(signature);
+                        FinalizeMaterialRemoval(signature);
                     }
                 }
 
@@ -296,18 +300,36 @@ namespace RemoteEditorSync
             Debug.Log($"[MaterialTracker] Sent UnregisterMaterial RPC: {signature.RuntimeMaterialId}");
         }
 
-        private static void SendUpdateMaterialProperties(Material material, MaterialSignature signature)
+        private static void SendUpdateMaterialProperties(MaterialSignature signature, Dictionary<string, MaterialPropertyValue> properties, bool isDelta)
         {
-            var snapshot = new MaterialSnapshot(material);
+            if (properties == null || properties.Count == 0)
+            {
+                return;
+            }
+
+            var propertiesJson = JsonConvert.SerializeObject(properties, _jsonSettings);
+            bool isCompressed = propertiesJson.Length > RemoteEditorSyncSettings.Instance.MaterialCompressionThreshold;
+            if (isCompressed)
+            {
+                propertiesJson = CompressionUtility.CompressToBase64(propertiesJson);
+            }
+
             var data = new UpdateMaterialPropertiesData
             {
                 Signature = signature,
-                PropertiesJson = JsonConvert.SerializeObject(snapshot.Properties, _jsonSettings)
+                PropertiesJson = propertiesJson,
+                IsDelta = isDelta,
+                IsCompressed = isCompressed
             };
 
             var json = JsonConvert.SerializeObject(data, _jsonSettings);
             SendRpc("UpdateMaterialProperties", new[] { json });
-            Debug.Log($"[MaterialTracker] Sent UpdateMaterialProperties RPC: {signature.RuntimeMaterialId}");
+            Debug.Log($"[MaterialTracker] Sent UpdateMaterialProperties RPC: {signature.RuntimeMaterialId} (delta={isDelta}, compressed={isCompressed})");
+        }
+
+        private static MaterialSnapshot CreateSnapshot(Material material)
+        {
+            return new MaterialSnapshot(material, RemoteEditorSyncSettings.Instance.MaterialQuantizationPrecision);
         }
 
         private static void SendRpc(string methodName, string[] args)

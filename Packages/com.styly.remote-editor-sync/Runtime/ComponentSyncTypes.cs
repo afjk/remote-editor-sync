@@ -107,6 +107,33 @@ namespace RemoteEditorSync
             return !PropertyValuesEqual(PropertyValues, currentValues);
         }
 
+        public Dictionary<string, object> ExtractDelta(Dictionary<string, object> currentValues)
+        {
+            var delta = new Dictionary<string, object>();
+            if (currentValues == null)
+            {
+                return delta;
+            }
+
+            foreach (var kvp in currentValues)
+            {
+                if (!PropertyValues.TryGetValue(kvp.Key, out var previousValue) || !ValuesEqual(previousValue, kvp.Value))
+                {
+                    delta[kvp.Key] = kvp.Value;
+                }
+            }
+
+            foreach (var kvp in PropertyValues)
+            {
+                if (!currentValues.ContainsKey(kvp.Key))
+                {
+                    delta[kvp.Key] = null;
+                }
+            }
+
+            return delta;
+        }
+
         private static bool PropertyValuesEqual(Dictionary<string, object> a, Dictionary<string, object> b)
         {
             if (a == null || b == null)

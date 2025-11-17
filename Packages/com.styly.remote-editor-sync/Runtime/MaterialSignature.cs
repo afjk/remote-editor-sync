@@ -175,6 +175,8 @@ namespace RemoteEditorSync
     {
         public MaterialSignature Signature;
         public string PropertiesJson;
+        public bool IsDelta;
+        public bool IsCompressed;
     }
 
     [Serializable]

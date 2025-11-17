@@ -16,6 +16,7 @@ namespace RemoteEditorSync
     {
         // キー: "sceneName:path" の形式でGameObjectをキャッシュ
         private readonly Dictionary<string, GameObject> _pathToGameObject = new Dictionary<string, GameObject>();
+        private readonly Dictionary<string, Dictionary<string, MaterialPropertyValue>> _materialStateCache = new Dictionary<string, Dictionary<string, MaterialPropertyValue>>();
 
         // JsonSerializerSettings to avoid circular reference errors
         private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
@@ -84,6 +85,10 @@ namespace RemoteEditorSync
 
                     case "UpdateGameObject":
                         HandleUpdateGameObject(args);
+                        break;
+
+                    case "ApplyGameObjectPatch":
+                        HandleApplyGameObjectPatch(args);
                         break;
 
                     case "UpdateComponent":
@@ -362,6 +367,68 @@ namespace RemoteEditorSync
             }
         }
 
+        private void HandleApplyGameObjectPatch(string[] args)
+        {
+            if (args == null || args.Length < 1)
+            {
+                return;
+            }
+
+            var data = JsonConvert.DeserializeObject<GameObjectPatchData>(args[0], _jsonSettings);
+            if (data == null || data.Properties == null || data.Properties.Count == 0)
+            {
+                return;
+            }
+
+            var go = FindGameObjectByPath(data.SceneName, data.Path);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for patch: {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            foreach (var kvp in data.Properties)
+            {
+                try
+                {
+                    switch (kvp.Key)
+                    {
+                        case "tag":
+                            if (kvp.Value is string tagValue)
+                            {
+                                go.tag = tagValue;
+                            }
+                            break;
+                        case "layer":
+                            if (kvp.Value != null)
+                            {
+                                go.layer = System.Convert.ToInt32(kvp.Value);
+                            }
+                            break;
+                        case "isStatic":
+                            if (kvp.Value is bool boolValue)
+                            {
+                                go.isStatic = boolValue;
+                            }
+                            else if (kvp.Value != null && bool.TryParse(kvp.Value.ToString(), out var parsed))
+                            {
+                                go.isStatic = parsed;
+                            }
+                            break;
+                        default:
+                            Debug.Log($"[RemoteEditorSyncReceiver] Unknown patch key '{kvp.Key}'");
+                            break;
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to apply patch '{kvp.Key}': {e.Message}");
+                }
+            }
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Applied GameObject patch to {data.SceneName}/{data.Path}");
+        }
+
         private void HandleSetComponentEnabled(string[] args)
         {
             if (args.Length < 1) return;
@@ -556,6 +623,7 @@ namespace RemoteEditorSync
             }
 
             MaterialAnchorRegistry.Instance.UnregisterMaterialDynamic(data.RuntimeMaterialId);
+            _materialStateCache.Remove(data.RuntimeMaterialId);
             Debug.Log($"[RemoteEditorSyncReceiver] Unregistered Material: {data.RuntimeMaterialId}");
         }
 
@@ -581,44 +649,42 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var properties = JsonConvert.DeserializeObject<Dictionary<string, MaterialPropertyValue>>(data.PropertiesJson, _jsonSettings);
-            if (properties == null)
+            string payload = data.PropertiesJson ?? string.Empty;
+            if (data.IsCompressed && !CompressionUtility.TryDecompressFromBase64(payload, out payload))
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to decompress material payload for {data.Signature.RuntimeMaterialId}");
+                return;
+            }
+
+            var incoming = JsonConvert.DeserializeObject<Dictionary<string, MaterialPropertyValue>>(payload, _jsonSettings);
+            if (incoming == null)
             {
                 return;
+            }
+
+            var state = GetOrCreateMaterialState(data.Signature.RuntimeMaterialId);
+            if (!data.IsDelta)
+            {
+                state.Clear();
+            }
+
+            foreach (var kvp in incoming)
+            {
+                if (kvp.Value == null)
+                {
+                    state.Remove(kvp.Key);
+                }
+                else
+                {
+                    state[kvp.Key] = kvp.Value;
+                }
             }
 
             Debug.Log($"[RemoteEditorSyncReceiver] Applying material update for {data.Signature.RuntimeMaterialId} (shader {data.Signature.ShaderName})");
 
             foreach (var material in materials)
             {
-                foreach (var kvp in properties)
-                {
-                    if (!material.HasProperty(kvp.Key))
-                    {
-                        Debug.Log($"[RemoteEditorSyncReceiver] Material {material.name} missing property {kvp.Key}, skipping.");
-                        continue;
-                    }
-
-                    try
-                    {
-                        switch (kvp.Value.Type)
-                        {
-                            case MaterialPropertyType.Color:
-                                material.SetColor(kvp.Key, kvp.Value.ColorValue.ToColor());
-                                break;
-                            case MaterialPropertyType.Float:
-                                material.SetFloat(kvp.Key, kvp.Value.FloatValue);
-                                break;
-                            case MaterialPropertyType.Vector:
-                                material.SetVector(kvp.Key, kvp.Value.VectorValue.ToVector4());
-                                break;
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to set material property {kvp.Key} on {material.name}: {e.Message}");
-                    }
-                }
+                ApplyMaterialProperties(material, state);
             }
 
             Debug.Log($"[RemoteEditorSyncReceiver] Updated Material Properties: {data.Signature.RuntimeMaterialId} ({materials.Count} material(s))");
@@ -635,6 +701,53 @@ namespace RemoteEditorSync
 
             var json = JsonConvert.SerializeObject(data, _jsonSettings);
             SendRPC("RegisterMaterialResult", new[] { json });
+        }
+
+        private Dictionary<string, MaterialPropertyValue> GetOrCreateMaterialState(string runtimeMaterialId)
+        {
+            if (!_materialStateCache.TryGetValue(runtimeMaterialId, out var state))
+            {
+                state = new Dictionary<string, MaterialPropertyValue>();
+                _materialStateCache[runtimeMaterialId] = state;
+            }
+
+            return state;
+        }
+
+        private void ApplyMaterialProperties(Material material, Dictionary<string, MaterialPropertyValue> properties)
+        {
+            foreach (var kvp in properties)
+            {
+                if (!material.HasProperty(kvp.Key))
+                {
+                    continue;
+                }
+
+                if (kvp.Value == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    switch (kvp.Value.Type)
+                    {
+                        case MaterialPropertyType.Color:
+                            material.SetColor(kvp.Key, kvp.Value.ColorValue.ToColor());
+                            break;
+                        case MaterialPropertyType.Float:
+                            material.SetFloat(kvp.Key, kvp.Value.FloatValue);
+                            break;
+                        case MaterialPropertyType.Vector:
+                            material.SetVector(kvp.Key, kvp.Value.VectorValue.ToVector4());
+                            break;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to set material property {kvp.Key} on {material.name}: {e.Message}");
+                }
+            }
         }
 
         private void ForceComponentUpdate(Component component)
@@ -1024,6 +1137,14 @@ namespace RemoteEditorSync
             public string SceneName;
             public string Path;
             public string SerializedData;
+        }
+
+        [System.Serializable]
+        private class GameObjectPatchData
+        {
+            public string SceneName;
+            public string Path;
+            public Dictionary<string, object> Properties;
         }
 
         [System.Serializable]
