@@ -128,6 +128,8 @@ namespace RemoteEditorSync
                     return "➖";
                 case PlayModeChangeLog.ChangeType.RenameGameObject:
                     return "✏️";
+                case PlayModeChangeLog.ChangeType.ReparentGameObject:
+                    return "🔀";
                 case PlayModeChangeLog.ChangeType.SetActive:
                     return "👁";
                 case PlayModeChangeLog.ChangeType.UpdateTransform:
@@ -282,6 +284,10 @@ namespace RemoteEditorSync
                     ApplyRenameGameObject(change.SceneName, change.Path, change.NewName);
                     break;
 
+                case PlayModeChangeLog.ChangeType.ReparentGameObject:
+                    ApplyReparentGameObject(change.SceneName, change.Path, change.NewParentPath, change.NewName, change.SiblingIndex);
+                    break;
+
                 case PlayModeChangeLog.ChangeType.SetActive:
                     ApplySetActive(change.SceneName, change.Path, change.NewActive);
                     break;
@@ -355,9 +361,99 @@ namespace RemoteEditorSync
             go.transform.localScale = data.Scale;
             go.SetActive(data.ActiveSelf);
 
+            // 作成時点のコンポーネント一覧を再現
+            if (data.Components != null)
+            {
+                foreach (var componentData in data.Components)
+                {
+                    ApplyComponentInit(go, componentData);
+                }
+            }
+
             Undo.RegisterCreatedObjectUndo(go, "Create GameObject");
 
             Debug.Log($"[PlayModeChangesWindow] Created: {data.SceneName}/{data.Path}");
+        }
+
+        private void ApplyComponentInit(GameObject go, ComponentInitData data)
+        {
+            if (data == null || string.IsNullOrEmpty(data.Signature.TypeName)) return;
+
+            var componentType = System.Type.GetType(data.Signature.TypeName);
+            if (componentType == null || !typeof(Component).IsAssignableFrom(componentType))
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Component type not found: {data.Signature.TypeName}");
+                return;
+            }
+
+            Component component;
+            var existing = go.GetComponents(componentType);
+            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            {
+                component = existing[data.Signature.Index];
+            }
+            else
+            {
+                component = go.AddComponent(componentType);
+            }
+
+            if (component == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Failed to add component: {componentType.Name}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                handler?.ApplyProperties(component, properties);
+            }
+        }
+
+        private void ApplyReparentGameObject(string sceneName, string fromPath, string newParentPath, string newName, int siblingIndex)
+        {
+            var scene = EditorSceneManager.GetSceneByName(sceneName);
+            var go = FindGameObjectByPath(scene, fromPath);
+
+            if (go == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for reparent: {sceneName}/{fromPath}");
+                return;
+            }
+
+            Transform newParent = null;
+            if (!string.IsNullOrEmpty(newParentPath))
+            {
+                var parentGo = FindGameObjectByPath(scene, newParentPath);
+                if (parentGo == null)
+                {
+                    Debug.LogWarning($"[PlayModeChangesWindow] New parent not found for reparent: {sceneName}/{newParentPath}");
+                    return;
+                }
+
+                newParent = parentGo.transform;
+            }
+
+            Undo.SetTransformParent(go.transform, newParent, "Reparent GameObject");
+
+            if (newParent == null && go.scene != scene && scene.IsValid())
+            {
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(go, scene);
+            }
+
+            if (!string.IsNullOrEmpty(newName) && go.name != newName)
+            {
+                Undo.RecordObject(go, "Rename GameObject");
+                go.name = newName;
+            }
+
+            if (siblingIndex >= 0)
+            {
+                go.transform.SetSiblingIndex(siblingIndex);
+            }
+
+            Debug.Log($"[PlayModeChangesWindow] Reparented: {sceneName}/{fromPath} → {(string.IsNullOrEmpty(newParentPath) ? "<root>" : newParentPath)}");
         }
 
         private void ApplyDeleteGameObject(string sceneName, string path)

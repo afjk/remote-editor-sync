@@ -82,6 +82,17 @@ namespace RemoteEditorSync
     }
 
     /// <summary>
+    /// Component payload bundled with GameObject creation so receivers can
+    /// reproduce the full component list of a newly created object.
+    /// </summary>
+    [Serializable]
+    public class ComponentInitData
+    {
+        public ComponentSignature Signature;
+        public string PropertiesJson;
+    }
+
+    /// <summary>
     /// Snapshot of component properties captured for change detection.
     /// </summary>
     [Serializable]

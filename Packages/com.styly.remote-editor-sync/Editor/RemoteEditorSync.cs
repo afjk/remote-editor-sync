@@ -124,6 +124,12 @@ namespace RemoteEditorSync
 
             MaterialTracker.Clear();
             EnsureAllRenderersHaveAnchors();
+
+            // シーン内の既存オブジェクトのベースラインを取得
+            // （これがないと変更イベント時に「変更後の値」が基準になり、最初の変更が送信されない）
+            // MaterialAnchor付与後に行うことで、アンカーが「追加コンポーネント」として誤検知されるのを防ぐ
+            CaptureBaselineSnapshots();
+
             RegisterAllSceneMaterials();
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
@@ -261,6 +267,7 @@ namespace RemoteEditorSync
             _pendingChanges.Flush(
                 EditorApplication.timeSinceStartup,
                 Settings.TransformFlushInterval,
+                DispatchReparentChange,
                 DispatchRenameChange,
                 DispatchSetActive,
                 DispatchTransform,
@@ -292,8 +299,7 @@ namespace RemoteEditorSync
                             if (ShouldSync(createdGo))
                             {
                                 Debug.Log($"[RemoteEditorSync] Creating and syncing: {createdGo.name}");
-                                CreateObjectState(createdGo);
-                                SendCreateGameObject(createdGo);
+                                SendCreateGameObjectHierarchy(createdGo);
                                 EnsureAnchorsForHierarchy(createdGo);
                                 RegisterMaterialsRecursive(createdGo);
                             }
@@ -318,6 +324,7 @@ namespace RemoteEditorSync
                             PlayModeChangeLog.Instance.RecordDeleteGameObject(trackedEntry.Value.SceneName, trackedEntry.Value.Path);
                             _trackedObjects.Remove(trackedEntry.Key);
                             _pendingChanges.Clear(trackedEntry.Key);
+                            RemoveTrackedDescendants(trackedEntry.Value.SceneName, trackedEntry.Value.Path);
                         }
                         MaterialTracker.UnregisterGameObject(destroyEvent.instanceId);
                         break;
@@ -616,6 +623,103 @@ namespace RemoteEditorSync
             _trackedObjects[state.InstanceId] = state;
         }
 
+        /// <summary>
+        /// Play開始時点でシーンに存在する全GameObjectのベースラインを取得する。
+        /// これにより最初の変更から正しく差分検知・送信できる。
+        /// </summary>
+        private static void CaptureBaselineSnapshots()
+        {
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded)
+                {
+                    continue;
+                }
+
+                foreach (var root in scene.GetRootGameObjects())
+                {
+                    CaptureBaselineRecursive(root);
+                }
+            }
+
+            Debug.Log($"[RemoteEditorSync] Captured baseline snapshots for {_trackedObjects.Count} GameObjects");
+        }
+
+        private static void CaptureBaselineRecursive(GameObject go)
+        {
+            if (go == null)
+            {
+                return;
+            }
+
+            CreateObjectState(go);
+
+            foreach (Transform child in go.transform)
+            {
+                CaptureBaselineRecursive(child.gameObject);
+            }
+        }
+
+        private static string GetParentPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return "";
+            }
+
+            var lastSlash = path.LastIndexOf('/');
+            return lastSlash < 0 ? "" : path.Substring(0, lastSlash);
+        }
+
+        /// <summary>
+        /// リネーム・再親付け後、子孫の追跡パスを新しい実パスに合わせて更新する。
+        /// これを怠ると子孫の次回更新時に誤った再親付け/リネームが送信される。
+        /// </summary>
+        private static void UpdateTrackedPathsForDescendants(GameObject go)
+        {
+            if (go == null)
+            {
+                return;
+            }
+
+            foreach (Transform child in go.transform)
+            {
+                var childGo = child.gameObject;
+                if (_trackedObjects.TryGetValue(childGo.GetInstanceID(), out var state))
+                {
+                    state.SceneName = childGo.scene.name;
+                    state.Path = GetGameObjectPath(childGo);
+                    state.Name = childGo.name;
+                }
+
+                UpdateTrackedPathsForDescendants(childGo);
+            }
+        }
+
+        /// <summary>
+        /// 階層削除時に、削除されたルート配下として追跡していた子孫のエントリを破棄する。
+        /// </summary>
+        private static void RemoveTrackedDescendants(string sceneName, string rootPath)
+        {
+            if (string.IsNullOrEmpty(rootPath))
+            {
+                return;
+            }
+
+            var prefix = rootPath + "/";
+            var toRemove = _trackedObjects
+                .Where(kvp => kvp.Value.SceneName == sceneName && kvp.Value.Path != null && kvp.Value.Path.StartsWith(prefix, StringComparison.Ordinal))
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var id in toRemove)
+            {
+                _trackedObjects.Remove(id);
+                _pendingChanges.Clear(id);
+            }
+        }
+
         private static string SerializeGameObject(GameObject go)
         {
             if (go == null)
@@ -631,6 +735,26 @@ namespace RemoteEditorSync
             {
                 Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// 作成されたGameObjectとその子孫をすべて送信する。
+        /// UI要素やプレハブのように子付き・コンポーネント付きで作成されるものを再現するため。
+        /// </summary>
+        private static void SendCreateGameObjectHierarchy(GameObject root)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            CreateObjectState(root);
+            SendCreateGameObject(root);
+
+            foreach (Transform child in root.transform)
+            {
+                SendCreateGameObjectHierarchy(child.gameObject);
             }
         }
 
@@ -654,7 +778,8 @@ namespace RemoteEditorSync
                 Scale = go.transform.localScale,
                 ActiveSelf = go.activeSelf,
                 PrimitiveType = primitiveType,
-                SerializedData = serializedData
+                SerializedData = serializedData,
+                Components = BuildComponentInitData(go)
             };
 
             SendRPC("CreateGameObject", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
@@ -663,7 +788,38 @@ namespace RemoteEditorSync
             PlayModeChangeLog.Instance.RecordCreateGameObject(
                 data.SceneName, data.Path, data.Name, data.ParentPath,
                 data.Position, data.Rotation, data.Scale, data.ActiveSelf,
-                data.PrimitiveType, data.SerializedData);
+                data.PrimitiveType, data.SerializedData, data.Components);
+        }
+
+        /// <summary>
+        /// GameObjectに付いているコンポーネントの初期状態を作成RPCに同梱するために収集する。
+        /// Transform本体は専用RPCで同期されるため除外（RectTransform等の派生型は含む）。
+        /// </summary>
+        private static List<ComponentInitData> BuildComponentInitData(GameObject go)
+        {
+            var list = new List<ComponentInitData>();
+            foreach (var component in go.GetComponents<Component>())
+            {
+                if (component == null || component.GetType() == typeof(Transform))
+                {
+                    continue;
+                }
+
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                if (handler == null)
+                {
+                    continue;
+                }
+
+                var properties = handler.ExtractProperties(component) ?? new Dictionary<string, object>();
+                list.Add(new ComponentInitData
+                {
+                    Signature = ComponentSignature.Create(component),
+                    PropertiesJson = properties.Count > 0 ? JsonConvert.SerializeObject(properties, _jsonSettings) : null
+                });
+            }
+
+            return list;
         }
 
         private static void SendUpdateComponentProperties(Component component, ComponentSnapshot previousSnapshot = null)
@@ -780,11 +936,23 @@ namespace RemoteEditorSync
 
             var sceneName = go.scene.name;
 
-            if (oldState.Name != go.name || oldState.Path != newPath)
+            var oldParentPath = GetParentPath(oldState.Path);
+            var newParentPath = GetParentPath(newPath);
+
+            if (oldParentPath != newParentPath)
+            {
+                // 親が変わった場合はリネームではなく再親付けとして送信
+                _pendingChanges.EnqueueReparent(id, sceneName, oldState.Path, newPath, newParentPath, go.name, go.transform.GetSiblingIndex());
+                oldState.Name = go.name;
+                oldState.Path = newPath;
+                UpdateTrackedPathsForDescendants(go);
+            }
+            else if (oldState.Name != go.name || oldState.Path != newPath)
             {
                 _pendingChanges.EnqueueRename(id, sceneName, oldState.Path, newPath, go.name);
                 oldState.Name = go.name;
                 oldState.Path = newPath;
+                UpdateTrackedPathsForDescendants(go);
             }
 
             if (oldState.ActiveSelf != go.activeSelf)
@@ -850,6 +1018,26 @@ namespace RemoteEditorSync
 
                 oldState.SerializedData = newSerializedData;
             }
+        }
+
+        private static void DispatchReparentChange(ReparentChange change)
+        {
+            if (string.IsNullOrEmpty(change.SceneName) || string.IsNullOrEmpty(change.FromPath))
+            {
+                return;
+            }
+
+            var data = new ReparentGameObjectData
+            {
+                SceneName = change.SceneName,
+                FromPath = change.FromPath,
+                NewParentPath = change.NewParentPath,
+                NewName = change.NewName,
+                SiblingIndex = change.SiblingIndex
+            };
+
+            SendRPC("ReparentGameObject", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordReparentGameObject(change.SceneName, change.FromPath, change.NewParentPath, change.NewName, change.SiblingIndex);
         }
 
         private static void DispatchRenameChange(RenameChange change)
@@ -1199,6 +1387,17 @@ namespace RemoteEditorSync
             public bool ActiveSelf;
             public string PrimitiveType; // "Sphere", "Cube", "Capsule", "Cylinder", "Plane", "Quad", or null
             public string SerializedData; // EditorJsonUtility serialized GameObject data
+            public List<ComponentInitData> Components; // 作成時点のコンポーネント一覧
+        }
+
+        [System.Serializable]
+        private class ReparentGameObjectData
+        {
+            public string SceneName;
+            public string FromPath;
+            public string NewParentPath;
+            public string NewName;
+            public int SiblingIndex;
         }
 
         [System.Serializable]

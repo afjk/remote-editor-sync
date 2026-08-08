@@ -20,13 +20,59 @@ namespace RemoteEditorSync
         public void EnqueueRename(int instanceId, string sceneName, string originalPath, string newPath, string newName)
         {
             var changes = GetOrCreate(instanceId, sceneName, newPath);
+
+            // 未送信の再親付けがある場合、名前をそちらへ畳み込んで1RPCにまとめる
+            // （別RPCにすると受信側が知らないパスを参照してしまう）
+            if (changes.HasReparent)
+            {
+                var reparent = changes.Reparent;
+                reparent.NewName = newName;
+                changes.Reparent = reparent;
+                return;
+            }
+
+            // 同一フラッシュ内で複数回リネームされた場合、受信側が知っている
+            // 最初のパスを維持しないと対象を見つけられなくなる
+            var fromPath = changes.HasRename ? changes.Rename.FromPath : originalPath;
             changes.Rename = new RenameChange
             {
                 SceneName = sceneName,
-                FromPath = originalPath,
+                FromPath = fromPath,
                 NewName = newName
             };
             changes.HasRename = true;
+        }
+
+        public void EnqueueReparent(int instanceId, string sceneName, string originalPath, string newPath, string newParentPath, string newName, int siblingIndex)
+        {
+            var changes = GetOrCreate(instanceId, sceneName, newPath);
+
+            // 受信側がまだ知っている最古のパスをFromPathに使う
+            string fromPath;
+            if (changes.HasReparent)
+            {
+                fromPath = changes.Reparent.FromPath;
+            }
+            else if (changes.HasRename)
+            {
+                // 未送信のリネームは再親付けRPCのNewNameに畳み込む
+                fromPath = changes.Rename.FromPath;
+                changes.HasRename = false;
+            }
+            else
+            {
+                fromPath = originalPath;
+            }
+
+            changes.Reparent = new ReparentChange
+            {
+                SceneName = sceneName,
+                FromPath = fromPath,
+                NewParentPath = newParentPath,
+                NewName = newName,
+                SiblingIndex = siblingIndex
+            };
+            changes.HasReparent = true;
         }
 
         public void EnqueueSetActive(int instanceId, string sceneName, string path, bool active)
@@ -122,6 +168,7 @@ namespace RemoteEditorSync
         public void Flush(
             double now,
             float transformInterval,
+            Action<ReparentChange> reparentAction,
             Action<RenameChange> renameAction,
             Action<SetActiveChange> activeAction,
             Action<BufferedTransformChange> transformAction,
@@ -141,6 +188,12 @@ namespace RemoteEditorSync
             foreach (var pair in _pending)
             {
                 var changes = pair.Value;
+
+                if (changes.HasReparent)
+                {
+                    reparentAction?.Invoke(changes.Reparent);
+                    changes.HasReparent = false;
+                }
 
                 if (changes.HasRename)
                 {
@@ -199,7 +252,8 @@ namespace RemoteEditorSync
                 }
                 changes.ComponentUpdates.Clear();
 
-                if (!changes.HasRename &&
+                if (!changes.HasReparent &&
+                    !changes.HasRename &&
                     !changes.HasActive &&
                     !changes.TransformDirty &&
                     !changes.HasPatch &&
@@ -242,6 +296,8 @@ namespace RemoteEditorSync
         {
             public string SceneName;
             public string Path;
+            public ReparentChange Reparent;
+            public bool HasReparent;
             public RenameChange Rename;
             public bool HasRename;
             public SetActiveChange Active;
@@ -264,6 +320,15 @@ namespace RemoteEditorSync
         public string SceneName;
         public string FromPath;
         public string NewName;
+    }
+
+    internal struct ReparentChange
+    {
+        public string SceneName;
+        public string FromPath;
+        public string NewParentPath;
+        public string NewName;
+        public int SiblingIndex;
     }
 
     internal struct SetActiveChange

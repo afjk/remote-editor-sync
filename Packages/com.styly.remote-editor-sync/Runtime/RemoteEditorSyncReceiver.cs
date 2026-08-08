@@ -75,6 +75,10 @@ namespace RemoteEditorSync
                         HandleRenameGameObject(args);
                         break;
 
+                    case "ReparentGameObject":
+                        HandleReparentGameObject(args);
+                        break;
+
                     case "SetActive":
                         HandleSetActive(args);
                         break;
@@ -203,11 +207,65 @@ namespace RemoteEditorSync
                 }
             }
 
+            // 作成時点のコンポーネント一覧を再現
+            if (data.Components != null)
+            {
+                foreach (var componentData in data.Components)
+                {
+                    ApplyComponentInit(go, componentData);
+                }
+            }
+
             // キャッシュに追加（シーン名を含むキー）
             string cacheKey = $"{data.SceneName}:{data.Path}";
             _pathToGameObject[cacheKey] = go;
 
             Debug.Log($"[RemoteEditorSyncReceiver] Created: {data.SceneName}/{data.Path}");
+        }
+
+        /// <summary>
+        /// CreateGameObjectに同梱されたコンポーネント情報を適用する。
+        /// プリミティブ等で既に同型コンポーネントが存在する場合はそれを再利用する。
+        /// </summary>
+        private void ApplyComponentInit(GameObject go, ComponentInitData data)
+        {
+            if (data == null || string.IsNullOrEmpty(data.Signature.TypeName))
+            {
+                return;
+            }
+
+            var componentType = System.Type.GetType(data.Signature.TypeName);
+            if (componentType == null || !typeof(Component).IsAssignableFrom(componentType))
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.Signature.TypeName}");
+                return;
+            }
+
+            Component component;
+            var existing = go.GetComponents(componentType);
+            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            {
+                component = existing[data.Signature.Index];
+            }
+            else
+            {
+                component = go.AddComponent(componentType);
+            }
+
+            if (component == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to add component of type {componentType.Name}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                handler?.ApplyProperties(component, properties);
+            }
+
+            ForceComponentUpdate(component);
         }
 
         private void HandleDeleteGameObject(string[] args)
@@ -249,6 +307,65 @@ namespace RemoteEditorSync
 
                 Debug.Log($"[RemoteEditorSyncReceiver] Renamed: {sceneName}/{oldPath} -> {sceneName}/{newPath}");
             }
+        }
+
+        private void HandleReparentGameObject(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<ReparentGameObjectData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var go = FindGameObjectByPath(data.SceneName, data.FromPath);
+            if (go == null)
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] GameObject not found for reparent: {data.SceneName}/{data.FromPath}");
+                return;
+            }
+
+            Transform newParent = null;
+            if (!string.IsNullOrEmpty(data.NewParentPath))
+            {
+                var parentGo = FindGameObjectByPath(data.SceneName, data.NewParentPath);
+                if (parentGo == null)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] New parent not found for reparent: {data.SceneName}/{data.NewParentPath}");
+                    return;
+                }
+
+                newParent = parentGo.transform;
+            }
+
+            string oldCacheKey = $"{data.SceneName}:{data.FromPath}";
+            _pathToGameObject.Remove(oldCacheKey);
+
+            // ローカル値を保持して付け替える。ワールド位置の補正は
+            // 直後に届くUpdateTransform RPCが担う。
+            go.transform.SetParent(newParent, false);
+
+            if (newParent == null)
+            {
+                var scene = SceneManager.GetSceneByName(data.SceneName);
+                if (scene.IsValid() && go.scene != scene)
+                {
+                    SceneManager.MoveGameObjectToScene(go, scene);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(data.NewName) && go.name != data.NewName)
+            {
+                go.name = data.NewName;
+            }
+
+            if (data.SiblingIndex >= 0)
+            {
+                go.transform.SetSiblingIndex(data.SiblingIndex);
+            }
+
+            string newPath = GetGameObjectPath(go);
+            _pathToGameObject[$"{data.SceneName}:{newPath}"] = go;
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Reparented: {data.SceneName}/{data.FromPath} -> {data.SceneName}/{newPath}");
         }
 
         private void HandleSetActive(string[] args)
@@ -1002,10 +1119,16 @@ namespace RemoteEditorSync
         {
             string cacheKey = $"{sceneName}:{path}";
 
-            // まずキャッシュを確認
-            if (_pathToGameObject.TryGetValue(cacheKey, out var cached) && cached != null)
+            // まずキャッシュを確認。リネームや再親付けで実際のパスが
+            // 変わっている可能性があるため、現在のパスと一致するか検証する
+            if (_pathToGameObject.TryGetValue(cacheKey, out var cached))
             {
-                return cached;
+                if (cached != null && cached.scene.name == sceneName && GetGameObjectPath(cached) == path)
+                {
+                    return cached;
+                }
+
+                _pathToGameObject.Remove(cacheKey);
             }
 
             // シーンを取得
@@ -1119,6 +1242,17 @@ namespace RemoteEditorSync
             public bool ActiveSelf;
             public string PrimitiveType; // "Sphere", "Cube", "Capsule", "Cylinder", "Plane", "Quad", or null
             public string SerializedData; // EditorJsonUtility serialized GameObject data
+            public List<ComponentInitData> Components; // 作成時点のコンポーネント一覧
+        }
+
+        [System.Serializable]
+        private class ReparentGameObjectData
+        {
+            public string SceneName;
+            public string FromPath;
+            public string NewParentPath;
+            public string NewName;
+            public int SiblingIndex;
         }
 
         [System.Serializable]

@@ -23,7 +23,8 @@ namespace RemoteEditorSync
         }
 
         public void RecordCreateGameObject(string sceneName, string path, string name, string parentPath,
-            Vector3 position, Vector3 rotation, Vector3 scale, bool activeSelf, string primitiveType, string serializedData)
+            Vector3 position, Vector3 rotation, Vector3 scale, bool activeSelf, string primitiveType, string serializedData,
+            List<ComponentInitData> components = null)
         {
             _changes.Add(new ChangeEntry
             {
@@ -42,8 +43,24 @@ namespace RemoteEditorSync
                     Scale = scale,
                     ActiveSelf = activeSelf,
                     PrimitiveType = primitiveType,
-                    SerializedData = serializedData
+                    SerializedData = serializedData,
+                    Components = components
                 }
+            });
+        }
+
+        public void RecordReparentGameObject(string sceneName, string fromPath, string newParentPath, string newName, int siblingIndex)
+        {
+            var parentLabel = string.IsNullOrEmpty(newParentPath) ? "<root>" : newParentPath;
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.ReparentGameObject,
+                SceneName = sceneName,
+                Path = fromPath,
+                NewParentPath = newParentPath,
+                NewName = newName,
+                SiblingIndex = siblingIndex,
+                Description = $"Reparent: {sceneName}/{fromPath} → {parentLabel}"
             });
         }
 
@@ -247,8 +264,10 @@ namespace RemoteEditorSync
             public ComponentPropertiesData ComponentPropertiesData;
             public ComponentAddData ComponentAddData;
             public ComponentRemoveData ComponentRemoveData;
-            public string NewName; // Rename用
+            public string NewName; // Rename/Reparent用
             public bool NewActive; // SetActive用
+            public string NewParentPath; // Reparent用
+            public int SiblingIndex = -1; // Reparent用
         }
 
         public enum ChangeType
@@ -256,6 +275,7 @@ namespace RemoteEditorSync
             CreateGameObject,
             DeleteGameObject,
             RenameGameObject,
+            ReparentGameObject,
             SetActive,
             UpdateTransform,
             UpdateGameObject,
@@ -277,6 +297,7 @@ namespace RemoteEditorSync
             public bool ActiveSelf;
             public string PrimitiveType;
             public string SerializedData;
+            public List<ComponentInitData> Components;
         }
 
         [System.Serializable]
