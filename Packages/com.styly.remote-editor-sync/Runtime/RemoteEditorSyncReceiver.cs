@@ -247,7 +247,7 @@ namespace RemoteEditorSync
                     continue;
                 }
 
-                var type = System.Type.GetType(componentData.Signature.TypeName);
+                var type = ComponentSignature.ResolveType(componentData.Signature.TypeName);
                 if (type != null && type != typeof(Transform) && typeof(Transform).IsAssignableFrom(type))
                 {
                     return type;
@@ -268,7 +268,7 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var componentType = System.Type.GetType(data.Signature.TypeName);
+            var componentType = ComponentSignature.ResolveType(data.Signature.TypeName);
             if (componentType == null || !typeof(Component).IsAssignableFrom(componentType))
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.Signature.TypeName}");
@@ -497,7 +497,7 @@ namespace RemoteEditorSync
             Debug.Log($"[RemoteEditorSyncReceiver] Found GameObject: {go.name}, getting component type: {data.ComponentType}");
 
             // ComponentTypeからTypeを取得
-            var componentType = System.Type.GetType(data.ComponentType);
+            var componentType = ComponentSignature.ResolveType(data.ComponentType);
             if (componentType == null)
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
@@ -607,7 +607,7 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var componentType = System.Type.GetType(data.ComponentType);
+            var componentType = ComponentSignature.ResolveType(data.ComponentType);
             if (componentType == null)
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.ComponentType}");
@@ -692,14 +692,36 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var componentType = System.Type.GetType(data.Signature.TypeName);
+            var componentType = ComponentSignature.ResolveType(data.Signature.TypeName);
             if (componentType == null)
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Component type not found: {data.Signature.TypeName}");
                 return;
             }
 
-            var component = go.AddComponent(componentType);
+            if (typeof(Transform).IsAssignableFrom(componentType))
+            {
+                // Transform派生型は追加できない（GameObjectは常に1つだけ持ち、生成時に決まる）。
+                // UI化などでTransform→RectTransformに差し替わるとAddedとして流れてくるため、
+                // ここで捨てないとUnityがエラーを出し続ける。
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Skipping add of transform-derived component {componentType.Name} on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            // 既に同じ位置に存在する場合は再利用する。
+            // [RequireComponent]による自動追加で先に生えているケースがあり、
+            // そのまま追加すると重複してインデックスがずれる。
+            Component component;
+            var existing = go.GetComponents(componentType);
+            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            {
+                component = existing[data.Signature.Index];
+            }
+            else
+            {
+                component = go.AddComponent(componentType);
+            }
+
             if (component == null)
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Failed to add component of type {componentType.Name}");
@@ -735,6 +757,14 @@ namespace RemoteEditorSync
             if (component == null)
             {
                 Debug.LogWarning($"[RemoteEditorSyncReceiver] Component not found for removal: {data.Signature.TypeName}");
+                return;
+            }
+
+            if (component is Transform)
+            {
+                // Transformは破棄できない。UI化でTransform→RectTransformに差し替わると
+                // Removedとして流れてくるので、ここで捨ててエラーを防ぐ。
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Skipping removal of transform component on {data.SceneName}/{data.Path}");
                 return;
             }
 

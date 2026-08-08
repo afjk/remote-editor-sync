@@ -32,6 +32,65 @@ namespace RemoteEditorSync
             };
         }
 
+        /// <summary>
+        /// Resolves a component type from a serialized AssemblyQualifiedName.
+        /// The direct lookup fails when the sender and receiver disagree on assembly
+        /// version or assembly name (a common asmdef difference between an Editor
+        /// project and a built client), so fall back to matching the bare full name
+        /// across every loaded assembly.
+        /// </summary>
+        public static Type ResolveType(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName))
+            {
+                return null;
+            }
+
+            // Checked before Type.GetType so the cache also spares the direct lookup,
+            // which parses the qualified name and probes assemblies on every call.
+            if (_typeCache.TryGetValue(typeName, out var cached))
+            {
+                return cached;
+            }
+
+            var resolved = Type.GetType(typeName);
+
+            if (resolved == null)
+            {
+                // "Namespace.Type, Assembly, Version=..., Culture=..." -> "Namespace.Type"
+                var commaIndex = typeName.IndexOf(',');
+                var fullName = commaIndex > 0 ? typeName.Substring(0, commaIndex).Trim() : typeName;
+
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        resolved = assembly.GetType(fullName, false);
+                    }
+                    catch
+                    {
+                        resolved = null;
+                    }
+
+                    if (resolved != null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            // Only successes are cached. A miss can become resolvable once more
+            // assemblies load, and caching it would make the failure permanent.
+            if (resolved != null)
+            {
+                _typeCache[typeName] = resolved;
+            }
+
+            return resolved;
+        }
+
+        private static readonly Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
+
         public Component Resolve(GameObject go)
         {
             if (go == null || string.IsNullOrEmpty(TypeName))
@@ -39,7 +98,7 @@ namespace RemoteEditorSync
                 return null;
             }
 
-            var type = Type.GetType(TypeName);
+            var type = ResolveType(TypeName);
             if (type == null)
             {
                 return null;

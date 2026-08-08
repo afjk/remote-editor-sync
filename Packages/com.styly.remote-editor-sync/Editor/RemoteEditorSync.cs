@@ -890,6 +890,13 @@ namespace RemoteEditorSync
                 return;
             }
 
+            if (component is Transform)
+            {
+                // Transform派生型は受信側で追加できない。UI化でTransform→RectTransformに
+                // 差し替わると追加として検出されるが、送っても適用できないので捨てる。
+                return;
+            }
+
             var handler = ComponentSyncHandlerRegistry.GetHandler(component);
             if (handler == null)
             {
@@ -916,6 +923,13 @@ namespace RemoteEditorSync
         {
             if (go == null || !ShouldSync(go))
             {
+                return;
+            }
+
+            var removedType = ComponentSignature.ResolveType(signature.TypeName);
+            if (removedType != null && typeof(Transform).IsAssignableFrom(removedType))
+            {
+                // Transformは受信側で破棄できないので送らない
                 return;
             }
 
