@@ -396,7 +396,7 @@ namespace RemoteEditorSync
                     continue;
                 }
 
-                var type = System.Type.GetType(componentData.Signature.TypeName);
+                var type = ComponentSignature.ResolveType(componentData.Signature.TypeName);
                 if (type != null && type != typeof(Transform) && typeof(Transform).IsAssignableFrom(type))
                 {
                     return type;
@@ -410,7 +410,7 @@ namespace RemoteEditorSync
         {
             if (data == null || string.IsNullOrEmpty(data.Signature.TypeName)) return;
 
-            var componentType = System.Type.GetType(data.Signature.TypeName);
+            var componentType = ComponentSignature.ResolveType(data.Signature.TypeName);
             if (componentType == null || !typeof(Component).IsAssignableFrom(componentType))
             {
                 Debug.LogWarning($"[PlayModeChangesWindow] Component type not found: {data.Signature.TypeName}");
@@ -628,15 +628,34 @@ namespace RemoteEditorSync
                 return;
             }
 
-            var componentType = System.Type.GetType(data.Signature.TypeName);
+            var componentType = ComponentSignature.ResolveType(data.Signature.TypeName);
             if (componentType == null)
             {
                 Debug.LogError($"[PlayModeChangesWindow] Component type not found: {data.Signature.TypeName}");
                 return;
             }
 
-            Undo.RecordObject(go, "Add Component");
-            var component = Undo.AddComponent(go, componentType);
+            if (typeof(Transform).IsAssignableFrom(componentType))
+            {
+                // Transform派生型は追加できない（GameObjectは常に1つだけ持ち、生成時に決まる）
+                Debug.LogWarning($"[PlayModeChangesWindow] Skipping add of transform-derived component {componentType.Name} on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            // 既に同じ位置に存在する場合は再利用する（[RequireComponent]の自動追加対策）
+            Component component;
+            var existing = go.GetComponents(componentType);
+            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            {
+                component = existing[data.Signature.Index];
+                Undo.RecordObject(component, "Update Component");
+            }
+            else
+            {
+                Undo.RecordObject(go, "Add Component");
+                component = Undo.AddComponent(go, componentType);
+            }
+
             if (component == null)
             {
                 Debug.LogError($"[PlayModeChangesWindow] Failed to add component: {componentType.Name}");
@@ -670,6 +689,13 @@ namespace RemoteEditorSync
             if (component == null)
             {
                 Debug.LogWarning($"[PlayModeChangesWindow] Target component missing during removal: {data.Signature.TypeName} on {data.SceneName}/{data.Path}");
+                return;
+            }
+
+            if (component is Transform)
+            {
+                // Transformは破棄できない
+                Debug.LogWarning($"[PlayModeChangesWindow] Skipping removal of transform component on {data.SceneName}/{data.Path}");
                 return;
             }
 
