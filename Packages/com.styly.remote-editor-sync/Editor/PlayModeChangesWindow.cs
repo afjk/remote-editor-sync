@@ -128,6 +128,8 @@ namespace RemoteEditorSync
                     return "➖";
                 case PlayModeChangeLog.ChangeType.RenameGameObject:
                     return "✏️";
+                case PlayModeChangeLog.ChangeType.ReparentGameObject:
+                    return "🔀";
                 case PlayModeChangeLog.ChangeType.SetActive:
                     return "👁";
                 case PlayModeChangeLog.ChangeType.UpdateTransform:
@@ -282,6 +284,10 @@ namespace RemoteEditorSync
                     ApplyRenameGameObject(change.SceneName, change.Path, change.NewName);
                     break;
 
+                case PlayModeChangeLog.ChangeType.ReparentGameObject:
+                    ApplyReparentGameObject(change.SceneName, change.Path, change.NewParentPath, change.NewName, change.SiblingIndex);
+                    break;
+
                 case PlayModeChangeLog.ChangeType.SetActive:
                     ApplySetActive(change.SceneName, change.Path, change.NewActive);
                     break;
@@ -337,9 +343,14 @@ namespace RemoteEditorSync
             }
 
             // プリミティブでなければ空のGameObjectを作成
+            // Transform派生型（RectTransform等）は後からAddComponentできないため、
+            // 生成時に指定する必要がある
             if (go == null)
             {
-                go = new GameObject(data.Name);
+                var transformType = ResolveTransformType(data.Components);
+                go = transformType != null
+                    ? new GameObject(data.Name, transformType)
+                    : new GameObject(data.Name);
             }
 
             // シーンに移動
@@ -355,9 +366,141 @@ namespace RemoteEditorSync
             go.transform.localScale = data.Scale;
             go.SetActive(data.ActiveSelf);
 
+            // 作成時点のコンポーネント一覧を再現
+            if (data.Components != null)
+            {
+                foreach (var componentData in data.Components)
+                {
+                    ApplyComponentInit(go, componentData);
+                }
+            }
+
             Undo.RegisterCreatedObjectUndo(go, "Create GameObject");
 
             Debug.Log($"[PlayModeChangesWindow] Created: {data.SceneName}/{data.Path}");
+        }
+
+        /// <summary>
+        /// 同梱されたコンポーネント一覧からTransform派生型（RectTransform等）を探す。
+        /// GameObject生成時にしか指定できないため、生成前に解決する必要がある。
+        /// 素のTransformは既定で付くのでnullを返す。
+        /// </summary>
+        private static System.Type ResolveTransformType(List<ComponentInitData> components)
+        {
+            if (components == null) return null;
+
+            foreach (var componentData in components)
+            {
+                if (componentData == null || string.IsNullOrEmpty(componentData.Signature.TypeName))
+                {
+                    continue;
+                }
+
+                var type = System.Type.GetType(componentData.Signature.TypeName);
+                if (type != null && type != typeof(Transform) && typeof(Transform).IsAssignableFrom(type))
+                {
+                    return type;
+                }
+            }
+
+            return null;
+        }
+
+        private void ApplyComponentInit(GameObject go, ComponentInitData data)
+        {
+            if (data == null || string.IsNullOrEmpty(data.Signature.TypeName)) return;
+
+            var componentType = System.Type.GetType(data.Signature.TypeName);
+            if (componentType == null || !typeof(Component).IsAssignableFrom(componentType))
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Component type not found: {data.Signature.TypeName}");
+                return;
+            }
+
+            Component component;
+            if (typeof(Transform).IsAssignableFrom(componentType))
+            {
+                // GameObjectは必ず1つだけTransform（派生型含む）を持ち、後から追加も交換もできない。
+                // 生成時に正しい型で作られているはずなので、それを使う。
+                component = componentType.IsInstanceOfType(go.transform) ? go.transform : null;
+                if (component == null)
+                {
+                    Debug.LogWarning($"[PlayModeChangesWindow] Cannot apply {componentType.Name} to '{go.name}': it already has a {go.transform.GetType().Name}");
+                    return;
+                }
+            }
+            else
+            {
+                var existing = go.GetComponents(componentType);
+                if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+                {
+                    component = existing[data.Signature.Index];
+                }
+                else
+                {
+                    component = go.AddComponent(componentType);
+                }
+            }
+
+            if (component == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] Failed to add component: {componentType.Name}");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(data.PropertiesJson))
+            {
+                var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
+                var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+                handler?.ApplyProperties(component, properties);
+            }
+        }
+
+        private void ApplyReparentGameObject(string sceneName, string fromPath, string newParentPath, string newName, int siblingIndex)
+        {
+            var scene = EditorSceneManager.GetSceneByName(sceneName);
+            var go = FindGameObjectByPath(scene, fromPath);
+
+            if (go == null)
+            {
+                Debug.LogWarning($"[PlayModeChangesWindow] GameObject not found for reparent: {sceneName}/{fromPath}");
+                return;
+            }
+
+            Transform newParent = null;
+            if (!string.IsNullOrEmpty(newParentPath))
+            {
+                var parentGo = FindGameObjectByPath(scene, newParentPath);
+                if (parentGo == null)
+                {
+                    Debug.LogWarning($"[PlayModeChangesWindow] New parent not found for reparent: {sceneName}/{newParentPath}");
+                    return;
+                }
+
+                newParent = parentGo.transform;
+            }
+
+            Undo.SetTransformParent(go.transform, newParent, "Reparent GameObject");
+
+            if (newParent == null && go.scene != scene && scene.IsValid())
+            {
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(go, scene);
+            }
+
+            if (!string.IsNullOrEmpty(newName) && go.name != newName)
+            {
+                Undo.RecordObject(go, "Rename GameObject");
+                go.name = newName;
+            }
+
+            if (siblingIndex >= 0)
+            {
+                // SetTransformParentは並び順の変更まではUndoに含めないため、明示的に記録する
+                Undo.RecordObject(go.transform, "Reorder GameObject");
+                go.transform.SetSiblingIndex(siblingIndex);
+            }
+
+            Debug.Log($"[PlayModeChangesWindow] Reparented: {sceneName}/{fromPath} → {(string.IsNullOrEmpty(newParentPath) ? "<root>" : newParentPath)}");
         }
 
         private void ApplyDeleteGameObject(string sceneName, string path)

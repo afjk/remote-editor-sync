@@ -14,10 +14,13 @@ namespace RemoteEditorSync
     }
 
     /// <summary>
-    /// Default reflection-based handler that extracts supported public properties.
+    /// Default reflection-based handler that extracts supported writable public
+    /// properties and serialized fields (public or [SerializeField]).
     /// </summary>
     public class ReflectionComponentHandler : IComponentSyncHandler
     {
+        private static readonly Dictionary<Type, FieldInfo[]> _serializedFieldCache = new Dictionary<Type, FieldInfo[]>();
+
         public virtual bool CanHandle(Type componentType)
         {
             return componentType != null && typeof(Component).IsAssignableFrom(componentType);
@@ -36,7 +39,7 @@ namespace RemoteEditorSync
 
             foreach (var prop in properties)
             {
-                if (!prop.CanRead || prop.GetIndexParameters().Length > 0)
+                if (!prop.CanRead || !prop.CanWrite || prop.GetIndexParameters().Length > 0)
                 {
                     continue;
                 }
@@ -64,6 +67,28 @@ namespace RemoteEditorSync
                 }
             }
 
+            foreach (var field in GetSerializedFields(type))
+            {
+                // GetSerializedFields walks derived-to-base, and a base class may declare a
+                // field with the same name as a derived one. Keep the first (most derived)
+                // hit so extraction matches FindSerializedField, which resolves the same way.
+                if (result.ContainsKey(field.Name))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var value = field.GetValue(component);
+                    value = PrepareValueForSerialization(value);
+                    result[field.Name] = value;
+                }
+                catch
+                {
+                    // Ignore individual field failures to keep sync resilient.
+                }
+            }
+
             return result;
         }
 
@@ -81,19 +106,99 @@ namespace RemoteEditorSync
                 try
                 {
                     var prop = type.GetProperty(kvp.Key, BindingFlags.Instance | BindingFlags.Public);
-                    if (prop == null || !prop.CanWrite)
+                    if (prop != null && prop.CanWrite)
                     {
+                        prop.SetValue(component, ConvertValue(kvp.Value, prop.PropertyType));
                         continue;
                     }
 
-                    var convertedValue = ConvertValue(kvp.Value, prop.PropertyType);
-                    prop.SetValue(component, convertedValue);
+                    var field = FindSerializedField(type, kvp.Key);
+                    if (field != null)
+                    {
+                        field.SetValue(component, ConvertValue(kvp.Value, field.FieldType));
+                    }
                 }
                 catch (Exception e)
                 {
                     Debug.LogWarning($"[ComponentHandler] Failed to set property {kvp.Key} on {component.GetType().Name}: {e.Message}");
                 }
             }
+        }
+
+        /// <summary>
+        /// Collects fields Unity serializes (public non-[NonSerialized] fields and
+        /// [SerializeField] private fields), walking the inheritance chain up to the
+        /// UnityEngine base classes whose state is native-backed.
+        /// </summary>
+        protected static FieldInfo[] GetSerializedFields(Type componentType)
+        {
+            lock (_serializedFieldCache)
+            {
+                if (_serializedFieldCache.TryGetValue(componentType, out var cached))
+                {
+                    return cached;
+                }
+            }
+
+            var fields = new List<FieldInfo>();
+            for (var type = componentType; type != null && !IsUnityBaseType(type); type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (field.IsStatic || field.IsInitOnly || field.IsLiteral)
+                    {
+                        continue;
+                    }
+
+                    if (field.IsPublic)
+                    {
+                        if (field.IsDefined(typeof(NonSerializedAttribute), false))
+                        {
+                            continue;
+                        }
+                    }
+                    else if (!field.IsDefined(typeof(SerializeField), false))
+                    {
+                        continue;
+                    }
+
+                    if (!TypeFilter.IsSupportedValueType(field.FieldType))
+                    {
+                        continue;
+                    }
+
+                    fields.Add(field);
+                }
+            }
+
+            var result = fields.ToArray();
+            lock (_serializedFieldCache)
+            {
+                _serializedFieldCache[componentType] = result;
+            }
+
+            return result;
+        }
+
+        protected static FieldInfo FindSerializedField(Type componentType, string fieldName)
+        {
+            foreach (var field in GetSerializedFields(componentType))
+            {
+                if (string.Equals(field.Name, fieldName, StringComparison.Ordinal))
+                {
+                    return field;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsUnityBaseType(Type type)
+        {
+            return type == typeof(MonoBehaviour) ||
+                   type == typeof(Behaviour) ||
+                   type == typeof(Component) ||
+                   type == typeof(UnityEngine.Object);
         }
 
         protected virtual bool ShouldExcludeProperty(string propertyName)
@@ -115,6 +220,7 @@ namespace RemoteEditorSync
                 case "hingeJoint":
                 case "particleEmitter":
                 case "name":
+                case "tag":
                 case "hideFlags":
                     return true;
                 default:
@@ -174,6 +280,14 @@ namespace RemoteEditorSync
             if (targetType.IsInstanceOfType(value))
             {
                 return value;
+            }
+
+            if (targetType == typeof(LayerMask))
+            {
+                // LayerMask is sent as its int value; rebuild the struct explicitly
+                // because neither Json.NET nor Convert.ChangeType can produce one.
+                var maskValue = value is JValue jMaskValue ? jMaskValue.ToObject<int>() : Convert.ToInt32(value);
+                return (LayerMask)maskValue;
             }
 
             if (value is JObject jObject)
@@ -333,6 +447,19 @@ namespace RemoteEditorSync
             new ReflectionComponentHandler()
         };
 
+        /// <summary>
+        /// このパッケージ自身の基盤コンポーネント。専用のRPC経路を持ち、
+        /// 各クライアントがローカルに自前の状態（アンカーGUID等）を管理するため、
+        /// 汎用のコンポーネント同期に載せてはいけない。
+        /// </summary>
+        private static readonly HashSet<Type> _excludedTypes = new HashSet<Type>
+        {
+            typeof(MaterialAnchor),
+            typeof(MaterialAnchorRegistry),
+            typeof(MaterialAnchorRuntimeBootstrap),
+            typeof(RemoteEditorSyncReceiver)
+        };
+
         public static void RegisterHandler(IComponentSyncHandler handler)
         {
             if (handler == null)
@@ -350,7 +477,7 @@ namespace RemoteEditorSync
 
         public static IComponentSyncHandler GetHandler(Type componentType)
         {
-            if (componentType == null)
+            if (componentType == null || _excludedTypes.Contains(componentType))
             {
                 return null;
             }

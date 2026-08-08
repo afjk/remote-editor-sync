@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-08
+
+### Added
+- **Serialized Field Synchronization**: Component sync now covers public fields and `[SerializeField]` private fields in addition to public properties, so custom MonoBehaviour Inspector edits are synced (uGUI `m_*` fields included)
+- **GameObject Reparent Synchronization**: Moving a GameObject in the Hierarchy is now replicated via a new `ReparentGameObject` RPC (with sibling index), and can be applied back to Edit mode from the Play Mode Changes window
+- **Component List on Creation**: `CreateGameObject` RPC now bundles the created object's component list (`ComponentInitData`), so objects created with components (Lights, UI elements, etc.) are fully reproduced on clients
+- **Hierarchy-aware Creation**: Creating an object with children (UI elements, prefab-like hierarchies) now sends the entire hierarchy, parent-first
+
+### Fixed
+- First change to any pre-existing GameObject was silently dropped because no baseline snapshot existed; baselines for all scene objects are now captured when Play mode starts
+- Read-only computed properties (`Renderer.bounds`, `worldToLocalMatrix`, `isVisible`, etc.) no longer trigger false change detection and wasted RPC traffic — only writable properties are extracted
+- `LayerMask` values are now converted correctly on the receiving side
+- Component-level `tag` property is no longer synced redundantly (GameObject patch already covers it)
+- Chained renames within one flush window kept an intermediate path as `FromPath`, making the receiver unable to find the target; the original path is now preserved (rename + reparent in the same window are folded into a single RPC)
+- Receiver's path cache now validates cached entries against their current path, preventing stale lookups after renames/reparents
+- Tracked state and pending changes of descendants are now cleaned up when a hierarchy is deleted
+- The package's own infrastructure components (`MaterialAnchor`, `MaterialAnchorRegistry`, `MaterialAnchorRuntimeBootstrap`, `RemoteEditorSyncReceiver`) are excluded from generic component sync — each client owns its anchor GUIDs locally, and syncing them would break material resolution on the receiving side
+- UI objects are now reconstructed correctly: `RectTransform` (and any other `Transform`-derived component) cannot be added after creation, so the GameObject is created with the right transform type up front and the bundled properties are applied to the existing transform instead of attempting `AddComponent`
+- Renames and reparents no longer leave stale path-cache entries for descendants on the receiving side — the whole subtree is purged and re-cached, so the cache can no longer grow without bound over a long session
+- Baseline snapshots and hierarchy creation now honor the tag filter (`ShouldSync`) like the rest of the pipeline, instead of tracking every GameObject in the scene
+- Serialized-field extraction keeps the most-derived field when a base class declares a field of the same name, matching how the value is resolved on apply
+- Sibling-index changes made when applying a reparent from the Play Mode Changes window are now recorded for Undo
+
 ## [1.2.5] - 2025-11-16
 
 ### Added

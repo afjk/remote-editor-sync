@@ -1,6 +1,6 @@
 {
   "name": "com.styly.remote-editor-sync",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "displayName": "STYLY Remote Editor Sync",
   "description": "Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via STYLY NetSync RPC. Perfect for XR development and remote debugging. Features: Component & Material Property Sync, Play Mode Changes Preservation, and Auto Sync On/Off!",
   "unity": "6000.0",

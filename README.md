@@ -11,8 +11,9 @@ Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via
 
 ## ✨ Features
 
-- 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, activation, and Transform changes
-- 🧩 **Component Property Sync**: Automatically sync component properties (Behaviour, Renderer, Collider, and more)
+- 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, reparenting, activation, and Transform changes
+- 🧩 **Component Property Sync**: Automatically sync component properties *and serialized fields* — including `public` fields and `[SerializeField]` private fields on your own MonoBehaviours
+- 🌳 **Full Hierarchy Creation**: Objects created with children and components (UI elements, Lights, etc.) are reproduced in full on the client
 - 🎨 **Material Property Sync**: Sync material shader properties (Color, Float, Vector) in real-time
 - 🎮 **Primitive Support**: Automatically detects and syncs Sphere, Cube, Capsule, Cylinder, Plane, Quad
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
@@ -74,7 +75,9 @@ Tools > Remote Editor Sync > Setup Scene
    - Move, rotate, scale objects
    - Toggle active/inactive
    - Rename or delete objects
+   - **Drag objects to a different parent** in the Hierarchy
    - **Modify component properties** (e.g., Light intensity, Collider size)
+   - **Edit your own script's fields** (e.g., a `public float speed` on a MonoBehaviour)
    - **Change material properties** (e.g., Albedo color, Metallic, Smoothness)
 
 → **Changes appear on client in real-time!** ✨
