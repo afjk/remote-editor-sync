@@ -648,7 +648,6 @@ namespace RemoteEditorSync
             if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
             {
                 component = existing[data.Signature.Index];
-                Undo.RecordObject(component, "Update Component");
             }
             else
             {
@@ -666,6 +665,10 @@ namespace RemoteEditorSync
             {
                 var properties = JsonConvert.DeserializeObject<Dictionary<string, object>>(data.PropertiesJson);
                 var handler = ComponentSyncHandlerRegistry.GetHandler(component);
+
+                // 新規追加・再利用のどちらでもプロパティ適用をUndoに含める
+                // （このウィンドウの他の適用処理と揃える）
+                Undo.RecordObject(component, "Apply Component Properties");
                 handler?.ApplyProperties(component, properties);
             }
 

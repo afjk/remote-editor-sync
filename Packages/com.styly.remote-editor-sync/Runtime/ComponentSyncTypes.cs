@@ -46,40 +46,46 @@ namespace RemoteEditorSync
                 return null;
             }
 
-            var type = Type.GetType(typeName);
-            if (type != null)
-            {
-                return type;
-            }
-
+            // Checked before Type.GetType so the cache also spares the direct lookup,
+            // which parses the qualified name and probes assemblies on every call.
             if (_typeCache.TryGetValue(typeName, out var cached))
             {
                 return cached;
             }
 
-            // "Namespace.Type, Assembly, Version=..., Culture=..." -> "Namespace.Type"
-            var commaIndex = typeName.IndexOf(',');
-            var fullName = commaIndex > 0 ? typeName.Substring(0, commaIndex).Trim() : typeName;
+            var resolved = Type.GetType(typeName);
 
-            Type resolved = null;
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            if (resolved == null)
             {
-                try
-                {
-                    resolved = assembly.GetType(fullName, false);
-                }
-                catch
-                {
-                    resolved = null;
-                }
+                // "Namespace.Type, Assembly, Version=..., Culture=..." -> "Namespace.Type"
+                var commaIndex = typeName.IndexOf(',');
+                var fullName = commaIndex > 0 ? typeName.Substring(0, commaIndex).Trim() : typeName;
 
-                if (resolved != null)
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    break;
+                    try
+                    {
+                        resolved = assembly.GetType(fullName, false);
+                    }
+                    catch
+                    {
+                        resolved = null;
+                    }
+
+                    if (resolved != null)
+                    {
+                        break;
+                    }
                 }
             }
 
-            _typeCache[typeName] = resolved;
+            // Only successes are cached. A miss can become resolvable once more
+            // assemblies load, and caching it would make the failure permanent.
+            if (resolved != null)
+            {
+                _typeCache[typeName] = resolved;
+            }
+
             return resolved;
         }
 

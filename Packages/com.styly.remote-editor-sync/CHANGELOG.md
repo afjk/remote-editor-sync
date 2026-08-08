@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Adding a UI component (which makes Unity swap `Transform` for `RectTransform`) no longer floods the client with errors. The swap surfaced as an added `RectTransform` plus a removed `Transform`; both are now suppressed on the sending side and guarded on the receiving side, since a transform can neither be added to nor destroyed on an existing GameObject
 - `AddComponent` is now idempotent: if a component already exists at the signature's index — typically because `[RequireComponent]` auto-added it — the existing one is reused instead of adding a duplicate that would shift every later index
-- Component type resolution falls back to matching the bare full name across loaded assemblies when the serialized `AssemblyQualifiedName` cannot be resolved, so custom scripts still resolve when the editor and the client build differ in assembly name or version. Results are cached
+- Component type resolution falls back to matching the bare full name across loaded assemblies when the serialized `AssemblyQualifiedName` cannot be resolved, so custom scripts still resolve when the editor and the client build differ in assembly name or version. Successful lookups are cached, and the cache is consulted before the direct lookup so hot paths skip it entirely; misses are deliberately not cached, since a type can become resolvable once more assemblies load
+- Applying an added component's properties from the Play Mode Changes window is now recorded for Undo on both the newly-added and the reused component path
 
 ## [1.3.0] - 2026-08-08
 
