@@ -49,6 +49,33 @@ namespace RemoteEditorSync
             });
         }
 
+        public void RecordInstantiatePrefab(string sceneName, string path, string name, string parentPath,
+            string prefabGuid, string prefabName,
+            Vector3 position, Vector3 rotation, Vector3 scale, bool activeSelf, int siblingIndex)
+        {
+            _changes.Add(new ChangeEntry
+            {
+                Type = ChangeType.InstantiatePrefab,
+                SceneName = sceneName,
+                Path = path,
+                Description = $"Instantiate Prefab: {prefabName} → {sceneName}/{path}",
+                InstantiatePrefabData = new InstantiatePrefabData
+                {
+                    SceneName = sceneName,
+                    Path = path,
+                    Name = name,
+                    ParentPath = parentPath,
+                    PrefabGuid = prefabGuid,
+                    PrefabName = prefabName,
+                    Position = position,
+                    Rotation = rotation,
+                    Scale = scale,
+                    ActiveSelf = activeSelf,
+                    SiblingIndex = siblingIndex
+                }
+            });
+        }
+
         public void RecordReparentGameObject(string sceneName, string fromPath, string newParentPath, string newName, int siblingIndex)
         {
             var parentLabel = string.IsNullOrEmpty(newParentPath) ? "<root>" : newParentPath;
@@ -259,6 +286,7 @@ namespace RemoteEditorSync
 
             // Type別データ
             public CreateGameObjectData CreateData;
+            public InstantiatePrefabData InstantiatePrefabData;
             public TransformData TransformData;
             public GameObjectData GameObjectData;
             public ComponentPropertiesData ComponentPropertiesData;
@@ -273,6 +301,7 @@ namespace RemoteEditorSync
         public enum ChangeType
         {
             CreateGameObject,
+            InstantiatePrefab,
             DeleteGameObject,
             RenameGameObject,
             ReparentGameObject,
@@ -298,6 +327,22 @@ namespace RemoteEditorSync
             public string PrimitiveType;
             public string SerializedData;
             public List<ComponentInitData> Components;
+        }
+
+        [System.Serializable]
+        public class InstantiatePrefabData
+        {
+            public string SceneName;
+            public string Path;
+            public string Name;
+            public string ParentPath;
+            public string PrefabGuid;
+            public string PrefabName;
+            public Vector3 Position;
+            public Vector3 Rotation;
+            public Vector3 Scale;
+            public bool ActiveSelf;
+            public int SiblingIndex;
         }
 
         [System.Serializable]

@@ -14,6 +14,10 @@ namespace RemoteEditorSync
     /// </summary>
     public class RemoteEditorSyncReceiver : MonoBehaviour
     {
+        [Tooltip("Prefab同期に使うレジストリ。未設定の場合はResourcesから "
+               + PrefabRegistry.DefaultAssetName + " を探します。")]
+        [SerializeField] private PrefabRegistry _prefabRegistry;
+
         // キー: "sceneName:path" の形式でGameObjectをキャッシュ
         private readonly Dictionary<string, GameObject> _pathToGameObject = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, Dictionary<string, MaterialPropertyValue>> _materialStateCache = new Dictionary<string, Dictionary<string, MaterialPropertyValue>>();
@@ -65,6 +69,10 @@ namespace RemoteEditorSync
                 {
                     case "CreateGameObject":
                         HandleCreateGameObject(args);
+                        break;
+
+                    case "InstantiatePrefab":
+                        HandleInstantiatePrefab(args);
                         break;
 
                     case "DeleteGameObject":
@@ -314,6 +322,74 @@ namespace RemoteEditorSync
             }
 
             ForceComponentUpdate(component);
+        }
+
+        private void HandleInstantiatePrefab(string[] args)
+        {
+            if (args.Length < 1) return;
+
+            var data = JsonConvert.DeserializeObject<InstantiatePrefabData>(args[0], _jsonSettings);
+            if (data == null) return;
+
+            var scene = SceneManager.GetSceneByName(data.SceneName);
+            if (!scene.IsValid())
+            {
+                Debug.LogWarning($"[RemoteEditorSyncReceiver] Scene not found: {data.SceneName}");
+                return;
+            }
+
+            var registry = _prefabRegistry != null ? _prefabRegistry : PrefabRegistry.GetRuntimeInstance();
+            if (registry == null)
+            {
+                Debug.LogError(
+                    $"[RemoteEditorSyncReceiver] Cannot instantiate prefab '{data.PrefabName}': no PrefabRegistry found. " +
+                    $"Create one via Tools > Remote Editor Sync > Prefab Registry, place it in a Resources folder as '{PrefabRegistry.DefaultAssetName}', and rebuild this client.");
+                return;
+            }
+
+            if (!registry.TryGetPrefab(data.PrefabGuid, out var prefab))
+            {
+                Debug.LogError(
+                    $"[RemoteEditorSyncReceiver] Prefab '{data.PrefabName}' ({data.PrefabGuid}) is not in the PrefabRegistry. " +
+                    "Register it in the editor and rebuild this client — prefabs must be present in the build to be instantiated.");
+                return;
+            }
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(data.ParentPath))
+            {
+                var parentGo = FindGameObjectByPath(data.SceneName, data.ParentPath);
+                if (parentGo != null)
+                {
+                    parent = parentGo.transform;
+                }
+            }
+
+            var go = Instantiate(prefab, parent);
+
+            // Instantiate suffixes the name with "(Clone)"; the editor's paths use the
+            // instance name, so it has to match or every later lookup misses.
+            go.name = data.Name;
+
+            if (parent == null)
+            {
+                SceneManager.MoveGameObjectToScene(go, scene);
+            }
+
+            go.transform.localPosition = data.Position;
+            go.transform.localRotation = Quaternion.Euler(data.Rotation);
+            go.transform.localScale = data.Scale;
+            go.SetActive(data.ActiveSelf);
+
+            if (data.SiblingIndex >= 0)
+            {
+                go.transform.SetSiblingIndex(data.SiblingIndex);
+            }
+
+            // The whole subtree is addressable by path from now on, so cache all of it.
+            CacheGameObjectRecursive(data.SceneName, go);
+
+            Debug.Log($"[RemoteEditorSyncReceiver] Instantiated prefab '{data.PrefabName}' at {data.SceneName}/{data.Path}");
         }
 
         private void HandleDeleteGameObject(string[] args)
@@ -1350,6 +1426,22 @@ namespace RemoteEditorSync
             public string PrimitiveType; // "Sphere", "Cube", "Capsule", "Cylinder", "Plane", "Quad", or null
             public string SerializedData; // EditorJsonUtility serialized GameObject data
             public List<ComponentInitData> Components; // 作成時点のコンポーネント一覧
+        }
+
+        [System.Serializable]
+        private class InstantiatePrefabData
+        {
+            public string SceneName;
+            public string Path;
+            public string Name;
+            public string ParentPath;
+            public string PrefabGuid;
+            public string PrefabName; // ログ用（GUIDだけでは何のPrefabか分からないため）
+            public Vector3 Position;
+            public Vector3 Rotation;
+            public Vector3 Scale;
+            public bool ActiveSelf;
+            public int SiblingIndex;
         }
 
         [System.Serializable]

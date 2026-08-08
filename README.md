@@ -14,6 +14,7 @@ Sync Unity Editor Hierarchy/Inspector changes to client devices in real-time via
 - 🎯 **Real-time Synchronization**: GameObject creation, deletion, renaming, reparenting, activation, and Transform changes
 - 🧩 **Component Property Sync**: Automatically sync component properties *and serialized fields* — including `public` fields and `[SerializeField]` private fields on your own MonoBehaviours
 - 🌳 **Full Hierarchy Creation**: Objects created with children and components (UI elements, Lights, etc.) are reproduced in full on the client
+- 📦 **Prefab Instantiation Sync**: drop a prefab into the Hierarchy and the client instantiates the same prefab from its GUID — meshes, materials and references stay intact (requires registering the prefab, see below)
 - 🎨 **Material Property Sync**: Sync material shader properties (Color, Float, Vector) in real-time
 - 🎮 **Primitive Support**: Automatically detects and syncs Sphere, Cube, Capsule, Cylinder, Plane, Quad
 - 🔧 **Editor-Only Detection**: Only manual editor changes are synced, not runtime script-generated objects
@@ -76,11 +77,37 @@ Tools > Remote Editor Sync > Setup Scene
    - Toggle active/inactive
    - Rename or delete objects
    - **Drag objects to a different parent** in the Hierarchy
+   - **Drop a registered prefab** into the Hierarchy
    - **Modify component properties** (e.g., Light intensity, Collider size)
    - **Edit your own script's fields** (e.g., a `public float speed` on a MonoBehaviour)
    - **Change material properties** (e.g., Albedo color, Metallic, Smoothness)
 
 → **Changes appear on client in real-time!** ✨
+
+## 📦 Prefab Instantiation Sync (NEW!)
+
+Dropping a prefab into the Hierarchy during Play mode instantiates the same prefab on the client. The editor sends only the prefab's **asset GUID** and its placement; the client instantiates the prefab itself, so meshes, materials, sprites and inter-object references come through intact — none of which the generic component sync can carry.
+
+### Setup
+
+Because the client is a built player, it can only instantiate prefabs that are **inside its build**. Register them first:
+
+1. Select the prefabs in the Project window
+2. `Tools` > `Remote Editor Sync` > `Prefab Registry` > `Register Selected Prefabs`
+3. **Build the client** — registration alone does not update an already-built client
+
+The registry asset is created at `Assets/Resources/RemoteEditorSyncPrefabRegistry.asset` and is discovered automatically at runtime. You can also assign it explicitly on the `RemoteEditorSyncReceiver` component.
+
+| Menu command | What it does |
+| --- | --- |
+| Create or Select Registry | Creates the asset if missing, then selects it |
+| Register Selected Prefabs | Adds the prefabs selected in the Project window |
+| Register Prefabs In Folder... | Adds every prefab under a chosen folder |
+| Remove Invalid Entries | Prunes deleted prefabs and duplicates |
+
+> **Note**: registered prefabs are pulled into the player build, so register only what you actually sync — a folder-wide scan can grow the build considerably.
+
+If an unregistered prefab is instantiated, the editor logs a warning naming the prefab and the client logs an error, rather than silently producing a broken object.
 
 ## 💾 Play Mode Changes Preservation (NEW!)
 

@@ -123,6 +123,7 @@ namespace RemoteEditorSync
             ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
 
             MaterialTracker.Clear();
+            PrefabRegistryWarning.Reset();
             EnsureAllRenderersHaveAnchors();
 
             // シーン内の既存オブジェクトのベースラインを取得
@@ -299,7 +300,15 @@ namespace RemoteEditorSync
                             if (ShouldSync(createdGo))
                             {
                                 Debug.Log($"[RemoteEditorSync] Creating and syncing: {createdGo.name}");
-                                SendCreateGameObjectHierarchy(createdGo);
+
+                                // Prefabインスタンスは中身を1つずつ再現するのではなく、
+                                // GUIDを送ってクライアント自身にInstantiateさせる。
+                                // アセット参照（Mesh/Material/Sprite等）が欠落しないため。
+                                if (!TrySendInstantiatePrefab(createdGo))
+                                {
+                                    SendCreateGameObjectHierarchy(createdGo);
+                                }
+
                                 EnsureAnchorsForHierarchy(createdGo);
                                 RegisterMaterialsRecursive(createdGo);
                             }
@@ -742,6 +751,68 @@ namespace RemoteEditorSync
                 Debug.LogWarning($"[RemoteEditorSync] Failed to serialize GameObject '{go.name}': {e.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 作成されたGameObjectがPrefabインスタンスのルートなら、GUIDと配置情報だけを送る。
+        /// クライアントは自前でInstantiateするため、アセット参照（Mesh/Material/Sprite等、
+        /// 汎用のコンポーネント同期では送れないもの）がそのまま再現される。
+        /// 送信した場合はtrueを返す。
+        /// </summary>
+        private static bool TrySendInstantiatePrefab(GameObject go)
+        {
+            if (go == null || !PrefabUtility.IsPartOfPrefabInstance(go))
+            {
+                return false;
+            }
+
+            // インスタンスのルートだけを対象にする。子はPrefabごと複製されるので送らない。
+            if (PrefabUtility.GetNearestPrefabInstanceRoot(go) != go)
+            {
+                return false;
+            }
+
+            var assetPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go);
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                return false;
+            }
+
+            var guid = AssetDatabase.AssetPathToGUID(assetPath);
+            if (string.IsNullOrEmpty(guid))
+            {
+                return false;
+            }
+
+            // Prefabが未登録だとクライアント側で復元できない。ここで気付けるよう警告する。
+            PrefabRegistryWarning.WarnIfUnregistered(guid, assetPath);
+
+            var t = go.transform;
+            var data = new InstantiatePrefabData
+            {
+                SceneName = go.scene.name,
+                Path = GetGameObjectPath(go),
+                Name = go.name,
+                ParentPath = t.parent != null ? GetGameObjectPath(t.parent.gameObject) : "",
+                PrefabGuid = guid,
+                PrefabName = System.IO.Path.GetFileNameWithoutExtension(assetPath),
+                Position = t.localPosition,
+                Rotation = t.localRotation.eulerAngles,
+                Scale = t.localScale,
+                ActiveSelf = go.activeSelf,
+                SiblingIndex = t.GetSiblingIndex()
+            };
+
+            SendRPC("InstantiatePrefab", new[] { JsonConvert.SerializeObject(data, _jsonSettings) });
+            PlayModeChangeLog.Instance.RecordInstantiatePrefab(
+                data.SceneName, data.Path, data.Name, data.ParentPath, data.PrefabGuid, data.PrefabName,
+                data.Position, data.Rotation, data.Scale, data.ActiveSelf, data.SiblingIndex);
+
+            // 送信はしないが、以降の編集を差分検知できるよう子孫まで状態を持つ
+            CaptureBaselineRecursive(go);
+
+            Debug.Log($"[RemoteEditorSync] Sent InstantiatePrefab '{data.PrefabName}' for {data.SceneName}/{data.Path}");
+            return true;
         }
 
         /// <summary>
@@ -1413,6 +1484,22 @@ namespace RemoteEditorSync
             public string PrimitiveType; // "Sphere", "Cube", "Capsule", "Cylinder", "Plane", "Quad", or null
             public string SerializedData; // EditorJsonUtility serialized GameObject data
             public List<ComponentInitData> Components; // 作成時点のコンポーネント一覧
+        }
+
+        [System.Serializable]
+        private class InstantiatePrefabData
+        {
+            public string SceneName;
+            public string Path;
+            public string Name;
+            public string ParentPath;
+            public string PrefabGuid;
+            public string PrefabName; // ログ用（GUIDだけでは何のPrefabか分からないため）
+            public Vector3 Position;
+            public Vector3 Rotation;
+            public Vector3 Scale;
+            public bool ActiveSelf;
+            public int SiblingIndex;
         }
 
         [System.Serializable]

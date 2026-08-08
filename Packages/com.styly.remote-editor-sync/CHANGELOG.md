@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-08
+
+### Added
+- **Prefab Instantiation Sync**: dragging a prefab into the Hierarchy during Play mode is now replicated on clients via a new `InstantiatePrefab` RPC. Rather than rebuilding the prefab's contents component by component, the editor sends the prefab's asset GUID plus placement (parent, local transform, active state, sibling index) and the client instantiates the prefab itself — so meshes, materials, sprites and inter-object references survive intact, which the generic component path cannot do
+  - `PrefabRegistry`: a `ScriptableObject` mapping prefab GUIDs to prefab references. It gives the client a GUID lookup (`AssetDatabase` does not exist at runtime) and, by referencing the prefabs, pulls them into the player build
+  - Registry tooling under `Tools` > `Remote Editor Sync` > `Prefab Registry`: create/select the asset, register selected prefabs, register every prefab in a folder, and prune invalid entries
+  - The registry is discovered at runtime from a `Resources` folder, or can be assigned explicitly on `RemoteEditorSyncReceiver`
+  - Instantiating a prefab that is not registered logs an actionable warning in the editor and an error on the client, instead of silently producing a broken object
+  - Play Mode Changes window can replay the instantiation into Edit mode, using `PrefabUtility.InstantiatePrefab` so the prefab link is preserved
+
+### Notes
+- A prefab must be registered **before** the client is built. Registering it later updates only the editor's copy; the client has no way to load an asset that is not in its build.
+
 ## [1.3.1] - 2026-08-08
 
 ### Fixed

@@ -124,6 +124,8 @@ namespace RemoteEditorSync
             {
                 case PlayModeChangeLog.ChangeType.CreateGameObject:
                     return "➕";
+                case PlayModeChangeLog.ChangeType.InstantiatePrefab:
+                    return "📦";
                 case PlayModeChangeLog.ChangeType.DeleteGameObject:
                     return "➖";
                 case PlayModeChangeLog.ChangeType.RenameGameObject:
@@ -274,6 +276,10 @@ namespace RemoteEditorSync
             {
                 case PlayModeChangeLog.ChangeType.CreateGameObject:
                     ApplyCreateGameObject(change.CreateData);
+                    break;
+
+                case PlayModeChangeLog.ChangeType.InstantiatePrefab:
+                    ApplyInstantiatePrefab(change.InstantiatePrefabData);
                     break;
 
                 case PlayModeChangeLog.ChangeType.DeleteGameObject:
@@ -501,6 +507,70 @@ namespace RemoteEditorSync
             }
 
             Debug.Log($"[PlayModeChangesWindow] Reparented: {sceneName}/{fromPath} → {(string.IsNullOrEmpty(newParentPath) ? "<root>" : newParentPath)}");
+        }
+
+        /// <summary>
+        /// Play中に作られたPrefabインスタンスをEdit modeへ再現する。
+        /// GUIDからアセットを引き、Prefabリンクを保ったままインスタンス化する。
+        /// </summary>
+        private void ApplyInstantiatePrefab(PlayModeChangeLog.InstantiatePrefabData data)
+        {
+            if (data == null) return;
+
+            var assetPath = AssetDatabase.GUIDToAssetPath(data.PrefabGuid);
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Prefab asset not found for GUID {data.PrefabGuid} ({data.PrefabName})");
+                return;
+            }
+
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            if (prefab == null)
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Failed to load prefab at {assetPath}");
+                return;
+            }
+
+            var scene = EditorSceneManager.GetSceneByName(data.SceneName);
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(data.ParentPath))
+            {
+                var parentGo = FindGameObjectByPath(scene, data.ParentPath);
+                if (parentGo != null)
+                {
+                    parent = parentGo.transform;
+                }
+            }
+
+            // Prefabリンクを保つためInstantiatePrefabを使う（Instantiateだと只のコピーになる）
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
+            if (go == null)
+            {
+                Debug.LogError($"[PlayModeChangesWindow] Failed to instantiate prefab {assetPath}");
+                return;
+            }
+
+            go.name = data.Name;
+
+            if (parent != null)
+            {
+                go.transform.SetParent(parent, false);
+            }
+
+            go.transform.localPosition = data.Position;
+            go.transform.localRotation = Quaternion.Euler(data.Rotation);
+            go.transform.localScale = data.Scale;
+            go.SetActive(data.ActiveSelf);
+
+            if (data.SiblingIndex >= 0)
+            {
+                go.transform.SetSiblingIndex(data.SiblingIndex);
+            }
+
+            Undo.RegisterCreatedObjectUndo(go, "Instantiate Prefab");
+
+            Debug.Log($"[PlayModeChangesWindow] Instantiated prefab '{data.PrefabName}' at {data.SceneName}/{data.Path}");
         }
 
         private void ApplyDeleteGameObject(string sceneName, string path)
