@@ -69,6 +69,14 @@ namespace RemoteEditorSync
 
             foreach (var field in GetSerializedFields(type))
             {
+                // GetSerializedFields walks derived-to-base, and a base class may declare a
+                // field with the same name as a derived one. Keep the first (most derived)
+                // hit so extraction matches FindSerializedField, which resolves the same way.
+                if (result.ContainsKey(field.Name))
+                {
+                    continue;
+                }
+
                 try
                 {
                     var value = field.GetValue(component);

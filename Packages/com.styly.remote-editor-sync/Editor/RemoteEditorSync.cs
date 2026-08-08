@@ -653,8 +653,14 @@ namespace RemoteEditorSync
                 return;
             }
 
-            CreateObjectState(go);
+            // 同期対象外のオブジェクトはスナップショットを取らない
+            // （送信側は全てShouldSyncで弾くため使われず、コンポーネント走査の分だけ無駄になる）
+            if (ShouldSync(go))
+            {
+                CreateObjectState(go);
+            }
 
+            // 子はタグが異なりうるので、親が対象外でも再帰は続ける
             foreach (Transform child in go.transform)
             {
                 CaptureBaselineRecursive(child.gameObject);
@@ -749,9 +755,14 @@ namespace RemoteEditorSync
                 return;
             }
 
-            CreateObjectState(root);
-            SendCreateGameObject(root);
+            // SendCreateGameObjectと同じくShouldSyncで対象を揃える
+            if (ShouldSync(root))
+            {
+                CreateObjectState(root);
+                SendCreateGameObject(root);
+            }
 
+            // 子はタグが異なりうるので、親が対象外でも再帰は続ける
             foreach (Transform child in root.transform)
             {
                 SendCreateGameObjectHierarchy(child.gameObject);

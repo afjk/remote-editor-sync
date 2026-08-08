@@ -343,9 +343,14 @@ namespace RemoteEditorSync
             }
 
             // プリミティブでなければ空のGameObjectを作成
+            // Transform派生型（RectTransform等）は後からAddComponentできないため、
+            // 生成時に指定する必要がある
             if (go == null)
             {
-                go = new GameObject(data.Name);
+                var transformType = ResolveTransformType(data.Components);
+                go = transformType != null
+                    ? new GameObject(data.Name, transformType)
+                    : new GameObject(data.Name);
             }
 
             // シーンに移動
@@ -375,6 +380,32 @@ namespace RemoteEditorSync
             Debug.Log($"[PlayModeChangesWindow] Created: {data.SceneName}/{data.Path}");
         }
 
+        /// <summary>
+        /// 同梱されたコンポーネント一覧からTransform派生型（RectTransform等）を探す。
+        /// GameObject生成時にしか指定できないため、生成前に解決する必要がある。
+        /// 素のTransformは既定で付くのでnullを返す。
+        /// </summary>
+        private static System.Type ResolveTransformType(List<ComponentInitData> components)
+        {
+            if (components == null) return null;
+
+            foreach (var componentData in components)
+            {
+                if (componentData == null || string.IsNullOrEmpty(componentData.Signature.TypeName))
+                {
+                    continue;
+                }
+
+                var type = System.Type.GetType(componentData.Signature.TypeName);
+                if (type != null && type != typeof(Transform) && typeof(Transform).IsAssignableFrom(type))
+                {
+                    return type;
+                }
+            }
+
+            return null;
+        }
+
         private void ApplyComponentInit(GameObject go, ComponentInitData data)
         {
             if (data == null || string.IsNullOrEmpty(data.Signature.TypeName)) return;
@@ -387,14 +418,28 @@ namespace RemoteEditorSync
             }
 
             Component component;
-            var existing = go.GetComponents(componentType);
-            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            if (typeof(Transform).IsAssignableFrom(componentType))
             {
-                component = existing[data.Signature.Index];
+                // GameObjectは必ず1つだけTransform（派生型含む）を持ち、後から追加も交換もできない。
+                // 生成時に正しい型で作られているはずなので、それを使う。
+                component = componentType.IsInstanceOfType(go.transform) ? go.transform : null;
+                if (component == null)
+                {
+                    Debug.LogWarning($"[PlayModeChangesWindow] Cannot apply {componentType.Name} to '{go.name}': it already has a {go.transform.GetType().Name}");
+                    return;
+                }
             }
             else
             {
-                component = go.AddComponent(componentType);
+                var existing = go.GetComponents(componentType);
+                if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+                {
+                    component = existing[data.Signature.Index];
+                }
+                else
+                {
+                    component = go.AddComponent(componentType);
+                }
             }
 
             if (component == null)
@@ -450,6 +495,8 @@ namespace RemoteEditorSync
 
             if (siblingIndex >= 0)
             {
+                // SetTransformParentは並び順の変更まではUndoに含めないため、明示的に記録する
+                Undo.RecordObject(go.transform, "Reorder GameObject");
                 go.transform.SetSiblingIndex(siblingIndex);
             }
 

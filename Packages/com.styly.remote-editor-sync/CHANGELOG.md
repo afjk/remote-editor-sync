@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Receiver's path cache now validates cached entries against their current path, preventing stale lookups after renames/reparents
 - Tracked state and pending changes of descendants are now cleaned up when a hierarchy is deleted
 - The package's own infrastructure components (`MaterialAnchor`, `MaterialAnchorRegistry`, `MaterialAnchorRuntimeBootstrap`, `RemoteEditorSyncReceiver`) are excluded from generic component sync — each client owns its anchor GUIDs locally, and syncing them would break material resolution on the receiving side
+- UI objects are now reconstructed correctly: `RectTransform` (and any other `Transform`-derived component) cannot be added after creation, so the GameObject is created with the right transform type up front and the bundled properties are applied to the existing transform instead of attempting `AddComponent`
+- Renames and reparents no longer leave stale path-cache entries for descendants on the receiving side — the whole subtree is purged and re-cached, so the cache can no longer grow without bound over a long session
+- Baseline snapshots and hierarchy creation now honor the tag filter (`ShouldSync`) like the rest of the pipeline, instead of tracking every GameObject in the scene
+- Serialized-field extraction keeps the most-derived field when a base class declares a field of the same name, matching how the value is resolved on apply
+- Sibling-index changes made when applying a reparent from the Play Mode Changes window are now recorded for Undo
 
 ## [1.2.5] - 2025-11-16
 

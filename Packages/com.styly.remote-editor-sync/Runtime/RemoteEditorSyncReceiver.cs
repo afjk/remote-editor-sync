@@ -175,9 +175,14 @@ namespace RemoteEditorSync
             }
 
             // プリミティブでなければ空のGameObjectを作成
+            // Transform派生型（RectTransform等）は後からAddComponentできないため、
+            // 生成時に指定する必要がある
             if (go == null)
             {
-                go = new GameObject(data.Name);
+                var transformType = ResolveTransformType(data.Components);
+                go = transformType != null
+                    ? new GameObject(data.Name, transformType)
+                    : new GameObject(data.Name);
             }
 
             // シーンに移動（親がnullの場合）
@@ -224,6 +229,35 @@ namespace RemoteEditorSync
         }
 
         /// <summary>
+        /// 同梱されたコンポーネント一覧からTransform派生型（RectTransform等）を探す。
+        /// GameObject生成時にしか指定できないため、生成前に解決する必要がある。
+        /// 素のTransformは既定で付くのでnullを返す。
+        /// </summary>
+        private static System.Type ResolveTransformType(List<ComponentInitData> components)
+        {
+            if (components == null)
+            {
+                return null;
+            }
+
+            foreach (var componentData in components)
+            {
+                if (componentData == null || string.IsNullOrEmpty(componentData.Signature.TypeName))
+                {
+                    continue;
+                }
+
+                var type = System.Type.GetType(componentData.Signature.TypeName);
+                if (type != null && type != typeof(Transform) && typeof(Transform).IsAssignableFrom(type))
+                {
+                    return type;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// CreateGameObjectに同梱されたコンポーネント情報を適用する。
         /// プリミティブ等で既に同型コンポーネントが存在する場合はそれを再利用する。
         /// </summary>
@@ -242,14 +276,28 @@ namespace RemoteEditorSync
             }
 
             Component component;
-            var existing = go.GetComponents(componentType);
-            if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+            if (typeof(Transform).IsAssignableFrom(componentType))
             {
-                component = existing[data.Signature.Index];
+                // GameObjectは必ず1つだけTransform（派生型含む）を持ち、後から追加も交換もできない。
+                // 生成時に正しい型で作られているはずなので、それを使う。
+                component = componentType.IsInstanceOfType(go.transform) ? go.transform : null;
+                if (component == null)
+                {
+                    Debug.LogWarning($"[RemoteEditorSyncReceiver] Cannot apply {componentType.Name} to '{go.name}': it already has a {go.transform.GetType().Name}");
+                    return;
+                }
             }
             else
             {
-                component = go.AddComponent(componentType);
+                var existing = go.GetComponents(componentType);
+                if (data.Signature.Index >= 0 && data.Signature.Index < existing.Length)
+                {
+                    component = existing[data.Signature.Index];
+                }
+                else
+                {
+                    component = go.AddComponent(componentType);
+                }
             }
 
             if (component == null)
@@ -296,14 +344,13 @@ namespace RemoteEditorSync
             var go = FindGameObjectByPath(sceneName, oldPath);
             if (go != null)
             {
-                string oldCacheKey = $"{sceneName}:{oldPath}";
-                _pathToGameObject.Remove(oldCacheKey);
+                // 自身だけでなく子孫のキーも旧パス基準なので、まとめて破棄する
+                RemoveCachedSubtree(sceneName, oldPath);
                 go.name = newName;
 
-                // 新しいパスで再登録
+                // 新しいパスで自身と子孫を再登録
                 string newPath = GetGameObjectPath(go);
-                string newCacheKey = $"{sceneName}:{newPath}";
-                _pathToGameObject[newCacheKey] = go;
+                CacheGameObjectRecursive(sceneName, go);
 
                 Debug.Log($"[RemoteEditorSyncReceiver] Renamed: {sceneName}/{oldPath} -> {sceneName}/{newPath}");
             }
@@ -336,8 +383,8 @@ namespace RemoteEditorSync
                 newParent = parentGo.transform;
             }
 
-            string oldCacheKey = $"{data.SceneName}:{data.FromPath}";
-            _pathToGameObject.Remove(oldCacheKey);
+            // 自身だけでなく子孫のキーも旧パス基準なので、まとめて破棄する
+            RemoveCachedSubtree(data.SceneName, data.FromPath);
 
             // ローカル値を保持して付け替える。ワールド位置の補正は
             // 直後に届くUpdateTransform RPCが担う。
@@ -363,7 +410,7 @@ namespace RemoteEditorSync
             }
 
             string newPath = GetGameObjectPath(go);
-            _pathToGameObject[$"{data.SceneName}:{newPath}"] = go;
+            CacheGameObjectRecursive(data.SceneName, go);
 
             Debug.Log($"[RemoteEditorSyncReceiver] Reparented: {data.SceneName}/{data.FromPath} -> {data.SceneName}/{newPath}");
         }
@@ -1167,6 +1214,36 @@ namespace RemoteEditorSync
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// 指定パス配下（自身を含む）のキャッシュエントリを破棄する。
+        /// リネーム・再親付けで実パスが変わると子孫のキーが恒久的に陳腐化し、
+        /// 参照されないまま溜まり続けるため、移動前に明示的に取り除く。
+        /// </summary>
+        private void RemoveCachedSubtree(string sceneName, string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return;
+            }
+
+            var selfKey = $"{sceneName}:{path}";
+            var descendantPrefix = $"{sceneName}:{path}/";
+
+            var staleKeys = new List<string>();
+            foreach (var key in _pathToGameObject.Keys)
+            {
+                if (key == selfKey || key.StartsWith(descendantPrefix, System.StringComparison.Ordinal))
+                {
+                    staleKeys.Add(key);
+                }
+            }
+
+            foreach (var key in staleKeys)
+            {
+                _pathToGameObject.Remove(key);
+            }
         }
 
         private void RefreshGameObjectCache()
